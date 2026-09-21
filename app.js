@@ -36,7 +36,7 @@ let driveReady = false;
 
 function defaultState(){
   return {
-    version: 1,
+    version: 2,
     products: [],
     customers: [],
     invoices: [],
@@ -68,7 +68,7 @@ function mergeState(raw){
     ...base,...raw,
     products:Array.isArray(raw?.products)?raw.products:[],
     customers:Array.isArray(raw?.customers)?raw.customers:[],
-    invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,stockDeducted:i.stockDeducted??true})):[],
+    invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,stockDeducted:i.stockDeducted??false,paid:Number(i.paid||0),delivered:!!i.delivered,reserved:i.reserved??(Number(i.paid||0)>0&&!i.delivered)})):[],
     estimates:Array.isArray(raw?.estimates)?raw.estimates:[],
     proformas:Array.isArray(raw?.proformas)?raw.proformas:[],
     transactions:Array.isArray(raw?.transactions)?raw.transactions:[],
@@ -192,6 +192,41 @@ function lastMonths(n=6){
 function salesTotal(){return state.invoices.reduce((s,i)=>s+Number(i.total||0),0)}
 function paidTotal(){return state.invoices.reduce((s,i)=>s+Number(i.paid||0),0)}
 function stockValue(){return state.products.reduce((s,p)=>s+Number(p.qty||0)*Number(p.cost||0),0)}
+function parseTaxCategories(raw){
+  return String(raw||"").split(/[,\n]+/).map(x=>x.trim()).filter(Boolean).map(label=>{
+    const m=label.match(/^(.*?)[\s:=-]*([0-9]+(?:\.[0-9]+)?)\s*%?$/);
+    return {label, name:(m?.[1]||label).trim(), rate:m?Number(m[2]):0};
+  }).filter(x=>x.rate>0);
+}
+function taxBreakdown(base, raw){
+  const categories=parseTaxCategories(raw);
+  return categories.map(x=>({...x,amount:base*x.rate/100}));
+}
+function documentTaxBase(doc){return Math.max(0,Number(doc.subtotal||0)-Number(doc.discount||0)+Number(doc.deliveryCharge||0)+Number(doc.laborCharge||0))}
+function reservedQty(productId, excludeId=""){
+  return state.invoices.filter(i=>i.id!==excludeId&&!i.delivered&&!i.stockDeducted&&Number(i.paid||0)>0)
+    .reduce((sum,i)=>sum+i.items.filter(x=>x.productId===productId).reduce((a,x)=>a+Number(x.qty||0),0),0);
+}
+function availableQty(productId, excludeId=""){
+  const p=state.products.find(x=>x.id===productId);return Math.max(0,Number(p?.qty||0)-reservedQty(productId,excludeId));
+}
+function stockAvailabilityWarnings(items, excludeId=""){
+  return items.map(x=>{
+    const p=state.products.find(p=>p.id===x.productId);const available=availableQty(x.productId,excludeId);
+    return p&&Number(x.qty)>available?`${p.name}: ${available} available (${reservedQty(x.productId,excludeId)} reserved), ${x.qty} requested.`:null;
+  }).filter(Boolean);
+}
+function taxesForDoc(doc){return taxBreakdown(documentTaxBase(doc),state.settings.taxCategories)}
+function taxTotal(doc){return taxesForDoc(doc).reduce((s,x)=>s+x.amount,0)}
+function recalcDocument(doc){
+  doc.subtotal=doc.items.reduce((s,x)=>s+Number(x.qty||0)*Number(x.price||0),0);
+  doc.taxBase=documentTaxBase(doc);
+  doc.taxLines=taxBreakdown(doc.taxBase,state.settings.taxCategories);
+  doc.taxTotal=doc.taxLines.reduce((s,x)=>s+x.amount,0);
+  doc.total=Math.max(0,doc.taxBase+doc.taxTotal);
+  return doc;
+}
+function reservedValue(){return state.invoices.reduce((s,i)=>s+(!i.delivered&&!i.stockDeducted&&Number(i.paid||0)>0?Number(i.total||0):0),0)}
 
 function renderDashboard(){
   $("#mStock").textContent=money(stockValue());$("#mStockUnits").textContent=`${state.products.reduce((s,p)=>s+Number(p.qty||0),0)} units`;
@@ -201,7 +236,7 @@ function renderDashboard(){
   $("#mCashIn").textContent=money(trans.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0));
   $("#mCashOut").textContent=money(trans.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0));
   renderCashChart();renderCategoryChart();
-  const low=state.products.filter(p=>Number(p.qty||0)<=Number(p.minQty||0));
+  const low=state.products.filter(p=>Number(p.qty||0)-reservedQty(p.id)<=Number(p.minQty||0));
   $("#lowStockList").innerHTML=low.length?low.slice(0,8).map(p=>`<div class="list-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.sku||"No SKU")}</small></div><span class="badge ${p.qty<=0?"out":"part"}">${p.qty} left</span></div>`).join(""):`<div class="empty">No low-stock items.</div>`;
   const recent=[...state.invoices].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
   $("#recentSalesList").innerHTML=recent.length?recent.map(i=>`<div class="list-row"><div><strong>${esc(i.number)}</strong><small>${esc(i.customerName||"Walk-in")} • ${esc(i.date)}</small></div><strong>${money(i.total)}</strong></div>`).join(""):`<div class="empty">No sales recorded.</div>`;
@@ -219,12 +254,18 @@ function renderCategoryChart(){
 }
 
 function renderStock(){
-  const q=($("#stockSearch")?.value||"").toLowerCase(),f=$("#stockFilter")?.value||"";
-  const rows=state.products.filter(p=>`${p.name} ${p.sku||""} ${p.category||""}`.toLowerCase().includes(q)).filter(p=>f==="low"?Number(p.qty)<=Number(p.minQty||0):f==="out"?Number(p.qty)<=0:true);
-  $("#stockTable").innerHTML=rows.length?rows.map(p=>`<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku||"—")}</td><td>${esc(p.category||"—")}</td><td><span class="badge ${p.qty<=0?"out":p.qty<=p.minQty?"part":"ok"}">${p.qty}</span></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td>${money(p.qty*p.cost)}</td><td><div class="actions"><button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn" data-delete-product="${p.id}">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No products found.</td></tr>`;
-  $$("[data-edit-product]").forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
-  $$("[data-adjust-product]").forEach(b=>b.onclick=()=>openAdjust(b.dataset.adjustProduct));
-  $$("[data-delete-product]").forEach(b=>b.onclick=()=>deleteProduct(b.dataset.deleteProduct));
+  const q=(document.querySelector("#stockSearch")?.value||"").toLowerCase(),f=document.querySelector("#stockFilter")?.value||"";
+  const rows=state.products.filter(p=>`${p.name} ${p.sku||""} ${p.category||""}`.toLowerCase().includes(q)).filter(p=>{
+    const avail=availableQty(p.id);return f==="low"?avail<=Number(p.minQty||0):f==="out"?avail<=0:true;
+  });
+  $("#stockTable").innerHTML=rows.length?rows.map(p=>{
+    const reserved=reservedQty(p.id),avail=Math.max(0,Number(p.qty||0)-reserved);
+    const badge=avail<=0?"out":avail<=Number(p.minQty||0)?"part":"ok";
+    return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku||"—")}</td><td>${esc(p.category||"—")}</td><td><span class="badge ${badge}">${p.qty} on hand</span><small class="table-sub">${reserved} reserved • ${avail} available</small></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td>${money(p.qty*p.cost)}</td><td><div class="actions"><button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn" data-delete-product="${p.id}">Delete</button></div></td></tr>`;
+  }).join(""):`<tr><td colspan="8" class="empty">No products found.</td></tr>`;
+  $("[data-edit-product]") && $$('[data-edit-product]').forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
+  $$('[data-adjust-product]').forEach(b=>b.onclick=()=>openAdjust(b.dataset.adjustProduct));
+  $$('[data-delete-product]').forEach(b=>b.onclick=()=>deleteProduct(b.dataset.deleteProduct));
 }
 function allDocuments(){
   return [
@@ -237,15 +278,23 @@ function renderSales(){
   const q=($t("#salesSearch")?.value||"").toLowerCase(),f=$t("#salesStatus")?.value||"";
   const rows=allDocuments().filter(d=>`${d.number} ${d.customerName||""}`.toLowerCase().includes(q)).filter(d=>!f||d.docType===f||d.status===f);
   $("#salesTable").innerHTML=rows.length?rows.map(d=>{
-    const isInv=d.docType==="Invoice";
-    const badge=d.status|| (isInv?"Unpaid":"Draft");
-    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Walk-in")}</td><td>${money(d.total)}</td><td>${isInv?money(d.paid):"—"}</td><td>${isInv?money(Math.max(0,d.total-d.paid)):"—"}</td><td><span class="badge ${badge==="Paid"?"paid":badge==="Part-paid"?"part":badge==="Delivered"?"paid":"unpaid"}">${esc(badge)}</span></td><td><div class="actions"><button class="icon-btn" data-print-doc="${d.id}">${isInv?"Print":"Print"}</button>${isInv?`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`:`<button class="icon-btn" data-convert="${d.docType.toLowerCase().startsWith("estimate")?"estimate":"proforma"}:${d.id}">Convert to invoice</button>`}<button class="icon-btn" data-delete-doc="${d.docType}:${d.id}">Delete</button></div></td></tr>`;
+    const isInv=d.docType==="Invoice", paid=Number(d.paid||0), balance=Math.max(0,Number(d.total||0)-paid);
+    const reserved=isInv&&!d.delivered&&!d.stockDeducted&&paid>0;
+    let badge=d.status||"Draft"; if(reserved) badge="Reserved / Awaiting delivery";
+    const cls=reserved?"part":badge==="Paid"||badge==="Delivered"?"paid":badge==="Part-paid"?"part":"unpaid";
+    let actions=`<button class="icon-btn" data-print-doc="${d.id}">Print</button>`;
+    if(d.docType==="Estimate") actions+=`<button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+    else if(d.docType==="Proforma Invoice") actions+=`<button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+    else actions+=`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`;
+    actions+=`<button class="icon-btn" data-delete-doc="${d.docType}:${d.id}">Delete</button>`;
+    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total)}</td><td>${isInv?money(paid):"—"}</td><td>${isInv?money(balance):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="actions">${actions}</div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No documents found.</td></tr>`;
   $$('[data-print-doc]').forEach(b=>b.onclick=()=>printDocument(b.dataset.printDoc));
   $$('[data-receipt]').forEach(b=>b.onclick=()=>printInvoice(b.dataset.receipt,true));
   $$('[data-payment]').forEach(b=>b.onclick=()=>recordPayment(b.dataset.payment));
   $$('[data-delivery]').forEach(b=>b.onclick=()=>confirmDelivery(b.dataset.delivery));
-  $$('[data-convert]').forEach(b=>{const [type,id]=b.dataset.convert.split(":");b.onclick=()=>convertToInvoice(type,id)});
+  $$('[data-convert-pro]').forEach(b=>b.onclick=()=>convertToProforma(b.dataset.convertPro));
+  $$('[data-convert-inv]').forEach(b=>b.onclick=()=>convertToInvoice(b.dataset.convertInv));
   $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>deleteDocument(type,id)});
 }
 function $t(sel){return document.querySelector(sel)}
@@ -343,51 +392,56 @@ function nextDocumentNumber(kind){
   const nums=arr.map(d=>d.number).filter(n=>n?.startsWith(`${prefix}-${code}-${year}-`)).map(n=>+(n.split("-").pop())||0);
   return `${prefix}-${code}-${year}-${String(Math.max(0,...nums)+1).padStart(4,"0")}`;
 }
-function customerSnapshot(c){return {customerId:c?.id||"",customerName:c?.name||"Walk-in customer",customerContactPerson:c?.contactPerson||"",customerPhone:c?.phone||"",customerEmail:c?.email||"",customerBillingAddress:c?.billingAddress||c?.address||"",customerShippingAddress:c?.shippingAddress||"",customerTaxId:c?.taxId||""}}
+function customerSnapshot(c){return {customerId:c?.id||"",customerName:c?.name||"",customerContactPerson:c?.contactPerson||"",customerPhone:c?.phone||"",customerEmail:c?.email||"",customerBillingAddress:c?.billingAddress||c?.address||"",customerShippingAddress:c?.shippingAddress||"",customerTaxId:c?.taxId||""}}
+function customerSelectHtml(selected=""){
+  return `<select id="sCustomer" class="input"><option value="">Select customer…</option>${state.customers.map(c=>`<option value="${c.id}" ${c.id===selected?"selected":""}>${esc(c.name)}</option>`).join("")}</select><button type="button" class="btn btn-outline" id="addCustomerInline">+ Add customer</button>`;
+}
 function openSale(){
-  if(!state.products.length){toast("Add products before creating a document.");return}
-  const customerOptions=state.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  modal(`<div class="modal-head"><h3>New Sales Document</h3><button class="close" data-close-modal>×</button></div>
-  <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="invoice">Sales Invoice</option><option value="estimate">Estimate / Quotation</option><option value="proforma">Proforma Invoice</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${today()}"></label></div>
-  <div class="two-col" style="margin-top:12px"><label>Customer<select id="sCustomer" class="input"><option value="">Walk-in customer</option>${customerOptions}</select></label><label>Tax category<select id="sTaxCategory" class="input"><option value="">No tax</option>${String(state.settings.taxCategories||"").split(/[,\\n]+/).map(x=>x.trim()).filter(Boolean).map(x=>`<option>${esc(x)}</option>`).join("")}</select></label></div>
+  if(!state.products.length){toast("Add products before creating a quotation.");return}
+  const taxLabels=parseTaxCategories(state.settings.taxCategories);
+  modal(`<div class="modal-head"><h3>New Quotation</h3><button class="close" data-close-modal>×</button></div>
+  <p class="muted">Every new sale starts as a quotation. Convert it to a proforma invoice or invoice when appropriate. Stock is deducted only after delivery.</p>
+  <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="estimate">Quotation</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${today()}"></label></div>
+  <div class="two-col" style="margin-top:12px"><label>Customer ${customerSelectHtml()}</label><div><label>Customer billing/shipping details</label><div id="selectedCustomerInfo" class="selected-customer">Select a customer. Walk-in sales are not used for formal documents.</div></div></div>
   <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><button class="btn btn-outline" id="addLine">+ Add item</button></div><div id="saleLines" class="line-items"></div></div>
-  <div class="two-col" style="margin-top:14px"><label>Discount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="0"></label><label>Amount paid<input id="sPaid" type="number" min="0" step=".01" class="input" value="0"></label></div>
-  <label style="display:block;margin-top:12px"><input id="sDelivered" type="checkbox" style="width:auto"> Confirm delivered to client (deduct stock)</label>
+  <div class="form-grid" style="margin-top:14px"><label>Discount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="0"></label><label>Delivery charge<input id="sDelivery" type="number" min="0" step=".01" class="input" value="0"></label><label>Installation / labor charge<input id="sLabor" type="number" min="0" step=".01" class="input" value="0"></label></div>
+  <div class="panel" style="margin-top:14px"><strong>Taxes applied automatically</strong><div class="muted" style="margin-top:5px">${taxLabels.length?taxLabels.map(x=>`${esc(x.name)} ${x.rate}%`).join(" + "):"No configured taxes"}</div></div>
   <label style="display:block;margin-top:12px">Document note<textarea id="sNote" class="input" rows="2">${esc(state.settings.documentNotes||"")}</textarea></label>
   <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">${money(0)}</span></div>
-  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save & Print</button></div>`);
-  const addLine=()=>{const row=document.createElement("div");row.className="product-line";row.innerHTML=`<select class="input line-product">${state.products.map(p=>`<option value="${p.id}">${esc(p.name)} — ${p.qty} available</option>`).join("")}</select><input class="input line-qty" type="number" min="1" value="1"><input class="input line-price" type="number" min="0" step=".01" value="0"><span class="line-sub">0.00</span><button class="icon-btn remove-line">×</button>`;$("#saleLines").appendChild(row);const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");price.value=state.products.find(p=>p.id===sel.value)?.price||0;row.oninput=updateTotal;sel.onchange=()=>{price.value=state.products.find(p=>p.id===sel.value)?.price||0;updateTotal()};row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};updateTotal()};
-  const updateTotal=()=>{let sub=0;$$('.product-line').forEach(r=>{const v=+r.querySelector('.line-qty').value||0,p=+r.querySelector('.line-price').value||0;const a=v*p;sub+=a;r.querySelector('.line-sub').textContent=money(a)});const total=Math.max(0,sub-(+$("#sDiscount").value||0));$("#saleTotal").textContent=money(total)};
-  $("#addLine").onclick=addLine;$("#sDiscount").oninput=updateTotal;addLine();
+  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save Quotation & Print</button></div>`);
+  function refreshCustomerInfo(){
+    const c=state.customers.find(c=>c.id===$("#sCustomer").value);
+    $("#selectedCustomerInfo").innerHTML=c?`<strong>${esc(c.name)}</strong><br>${esc(c.phone||"")} ${c.email?`• ${esc(c.email)}`:""}<br>${esc(c.billingAddress||"")}${c.shippingAddress?`<br>Ship: ${esc(c.shippingAddress)}`:""}`:"<span class='muted'>Select a customer. Walk-in sales are not used for formal documents.</span>";
+  }
+  $("#addCustomerInline").onclick=()=>openCustomer(null,id=>{ $("#sCustomer").value=id; refreshCustomerInfo(); });
+  $("#sCustomer").onchange=refreshCustomerInfo;
+  const addLine=()=>{const row=document.createElement("div");row.className="product-line";row.innerHTML=`<select class="input line-product">${state.products.map(p=>`<option value="${p.id}">${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}</select><input class="input line-qty" type="number" min="1" value="1"><input class="input line-price" type="number" min="0" step=".01" value="0"><span class="line-sub">0.00</span><button class="icon-btn remove-line">×</button>`;$("#saleLines").appendChild(row);const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");price.value=state.products.find(p=>p.id===sel.value)?.price||0;row.oninput=updateTotal;sel.onchange=()=>{price.value=state.products.find(p=>p.id===sel.value)?.price||0;updateTotal()};row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};updateTotal()};
+  const updateTotal=()=>{const items=$$('.product-line').map(r=>({qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0}));const subtotal=items.reduce((s,x)=>s+x.qty*x.price,0),discount=+$("#sDiscount").value||0,delivery=+$("#sDelivery").value||0,labor=+$("#sLabor").value||0,base=Math.max(0,subtotal-discount+delivery+labor),tax=taxBreakdown(base,state.settings.taxCategories).reduce((s,x)=>s+x.amount,0);$("#saleTotal").textContent=money(base+tax)};
+  $("#addLine").onclick=addLine;$("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;addLine();
   $("#saveSaleBtn").onclick=()=>{
-    const kind=$("#sDocType").value;const items=$$('.product-line').map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value,price:+r.querySelector('.line-price').value})).filter(x=>x.qty>0);
-    if(!items.length)return toast("Add at least one item.");
-    if(kind==="invoice" && ((+$("#sPaid").value||0)>0 || $("#sDelivered").checked)){for(const x of items){const p=state.products.find(p=>p.id===x.productId);if(!p||x.qty>p.qty)return toast(`Not enough stock for ${p?.name||"item"}.`)}}
-    const subtotal=items.reduce((s,x)=>s+x.qty*x.price,0),discount=+$("#sDiscount").value||0,total=Math.max(0,subtotal-discount),paid=Math.min(total,Math.max(0,+$("#sPaid").value||0));
-    const c=state.customers.find(c=>c.id===$("#sCustomer").value);const snap=customerSnapshot(c);
-    const doc={id:uid(kind),number:nextDocumentNumber(kind),date:$("#sDate").value,items,subtotal,discount,total,paid:kind==="invoice"?paid:0,status:kind==="invoice"?(paid>=total?"Paid":paid>0?"Part-paid":"Unpaid"):"Draft",delivered:kind==="invoice"?!!$("#sDelivered").checked:false,stockDeducted:false,taxCategory:$("#sTaxCategory").value,note:$("#sNote").value.trim(),...snap};
-    mutate(()=>{
-      const arr=kind==="invoice"?state.invoices:kind==="estimate"?state.estimates:state.proformas;arr.push(doc);
-      if(kind==="invoice" && (paid>0 || doc.delivered)) {deductDocumentStock(doc);}
-      if(kind==="invoice" && paid>0) state.transactions.push({id:uid("tx"),date:doc.date,type:"in",category:"Sales",description:`Payment for ${doc.number}`,amount:paid,reference:doc.number});
-    });closeModal();printDocument(doc.id);
+    const c=state.customers.find(c=>c.id===$("#sCustomer").value);if(!c)return toast("Select or add a customer before saving the quotation.");
+    const items=$$('.product-line').map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value,price:+r.querySelector('.line-price').value})).filter(x=>x.qty>0);if(!items.length)return toast("Add at least one item.");
+    const doc={id:uid("estimate"),number:nextDocumentNumber("estimate"),date:$("#sDate").value,items,discount:+$("#sDiscount").value||0,deliveryCharge:+$("#sDelivery").value||0,laborCharge:+$("#sLabor").value||0,paid:0,status:"Quotation",delivered:false,stockDeducted:false,note:$("#sNote").value.trim(),...customerSnapshot(c)};recalcDocument(doc);
+    mutate(()=>state.estimates.push(doc));closeModal();printDocument(doc.id);
   };
 }
 function deductDocumentStock(doc){
   if(doc.stockDeducted)return;
-  for(const x of doc.items){const p=state.products.find(p=>p.id===x.productId);if(!p || Number(p.qty)<Number(x.qty))throw new Error(`Insufficient stock for ${p?.name||"item"}`);}
-  doc.items.forEach(x=>{const p=state.products.find(p=>p.id===x.productId);p.qty-=Number(x.qty)});doc.stockDeducted=true;
+  for(const x of doc.items){const p=state.products.find(p=>p.id===x.productId);if(!p||Number(p.qty)<Number(x.qty))throw new Error(`Insufficient physical stock for ${p?.name||"item"}.`)}
+  doc.items.forEach(x=>{const p=state.products.find(p=>p.id===x.productId);p.qty-=Number(x.qty)});doc.stockDeducted=true;doc.reserved=false;
 }
 function recordPayment(id){
   const inv=state.invoices.find(x=>x.id===id);if(!inv)return;const bal=Math.max(0,Number(inv.total)-Number(inv.paid));if(bal<=0)return toast("Invoice is already fully paid.");
-  modal(`<div class="modal-head"><h3>Record Payment — ${esc(inv.number)}</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><label>Outstanding balance<input class="input" value="${money(bal)}" readonly></label><label>Payment amount<input id="payAmount" type="number" min="0" max="${bal}" step=".01" class="input" value="${bal}"></label><label>Date<input id="payDate" type="date" class="input" value="${today()}"></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePayment">Save Payment</button></div>`);
-  $("#savePayment").onclick=()=>{const amount=Math.min(bal,Math.max(0,+$("#payAmount").value||0));if(amount<=0)return toast("Enter a payment amount.");mutate(()=>{inv.paid=Number(inv.paid||0)+amount;inv.status=inv.paid>=inv.total?"Paid":"Part-paid";if(!inv.stockDeducted)deductDocumentStock(inv);state.transactions.push({id:uid("tx"),date:$("#payDate").value,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount,reference:inv.number})});closeModal()};
+  modal(`<div class="modal-head"><h3>Record Payment — ${esc(inv.number)}</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><label>Outstanding balance<input class="input" value="${money(bal)}" readonly></label><label>Payment amount<input id="payAmount" type="number" min="0" max="${bal}" step=".01" class="input" value="${bal}"></label><label>Date<input id="payDate" type="date" class="input" value="${today()}"></label></div><p class="muted">Payment reserves the ordered stock. Stock remains in physical inventory until delivery is confirmed.</p><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePayment">Save Payment</button></div>`);
+  $("#savePayment").onclick=()=>{const amount=Math.min(bal,Math.max(0,+$("#payAmount").value||0));if(amount<=0)return toast("Enter a payment amount.");mutate(()=>{inv.paid=Number(inv.paid||0)+amount;inv.status=inv.paid>=inv.total?"Paid":"Part-paid";inv.reserved=!inv.delivered&&!inv.stockDeducted;state.transactions.push({id:uid("tx"),date:$("#payDate").value,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount,reference:inv.number})});closeModal()};
 }
-function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to the client? Stock will be deducted.`))return;try{mutate(()=>{inv.delivered=true;if(!inv.stockDeducted)deductDocumentStock(inv);});}catch(e){toast(e.message)} }
-function convertToInvoice(type,id){
-  const source=(type==="estimate"?state.estimates:state.proformas).find(x=>x.id===id);if(!source)return;
-  modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><small class="muted">A payment or part payment will deduct stock when the invoice is created. You can also confirm delivery later.</small></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Create Invoice</button></div>`);
-  $("#convertBtn").onclick=()=>{const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));if(paid<=0)return toast("Enter a payment or part payment to convert this document.");const inv={...source,id:uid("inv"),number:nextDocumentNumber("invoice"),date:$("#convertDate").value,paid,status:paid>=source.total?"Paid":"Part-paid",delivered:false,stockDeducted:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number};try{mutate(()=>{state.invoices.push(inv);deductDocumentStock(inv);state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number});});closeModal();printDocument(inv.id)}catch(e){toast(e.message)}};
+function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}? Stock will be deducted.`))return;try{mutate(()=>{inv.delivered=true;deductDocumentStock(inv);inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered";});}catch(e){toast(e.message)}}
+function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),paid:kind==="invoice"?paid:0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Part-paid"):"Unpaid"):"Proforma",delivered:false,stockDeducted:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number};recalcDocument(inv);return inv}
+function convertToProforma(id){const source=state.estimates.find(x=>x.id===id);if(!source)return;if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");const pro=copyForConversion(source,"proforma");mutate(()=>state.proformas.push(pro));toast(`${pro.number} created from ${source.number}.`);printDocument(pro.id)}
+function convertToInvoice(id){
+  const source=state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id);if(!source)return;if(!source.customerId)return toast("This document has no customer. Add a customer before converting.");
+  modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><p class="muted">Paid stock will be marked <strong>Reserved</strong> until delivery. It will not reduce physical stock yet.</p></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Create Invoice</button></div>`);
+  $("#convertBtn").onclick=()=>{const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));const inv={...copyForConversion(source,"invoice",paid),date:$("#convertDate").value};const warnings=stockAvailabilityWarnings(inv.items);if(warnings.length){toast("Not enough available stock: "+warnings.join(" "));return}try{mutate(()=>{state.invoices.push(inv);if(paid>0){inv.reserved=true;state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number})}});closeModal();printDocument(inv.id)}catch(e){toast(e.message)}};
 }
 function openCash(){
   modal(`<div class="modal-head"><h3>Record Cash Transaction</h3><button class="close" data-close-modal>×</button></div>
@@ -396,10 +450,10 @@ function openCash(){
   $("#saveCashBtn").onclick=()=>{const a=+$("#tAmount").value;if(a<=0)return toast("Enter an amount.");mutate(()=>state.transactions.push({id:uid("tx"),date:$("#tDate").value,type:$("#tType").value,category:$("#tCat").value.trim(),description:$("#tDesc").value.trim(),amount:a,reference:$("#tRef").value.trim()}));closeModal()};
 }
 function deleteCash(id){if(confirm("Delete this transaction?"))mutate(()=>state.transactions=state.transactions.filter(t=>t.id!==id))}
-function openCustomer(id=null){
+function openCustomer(id=null,onSaved=null){
   const c=id?state.customers.find(x=>x.id===id):null;
-  modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Customer / Company name<input id="cName" class="input" value="${esc(c?.name||"")}"></label><label>Contact person<input id="cContact" class="input" value="${esc(c?.contactPerson||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Tax ID / VAT number<input id="cTaxId" class="input" value="${esc(c?.taxId||"")}"></label><label>Billing address<textarea id="cBilling" class="input" rows="3">${esc(c?.billingAddress||c?.address||"")}</textarea></label><label>Shipping address<textarea id="cShipping" class="input" rows="3">${esc(c?.shippingAddress||"")}</textarea></label><label>Customer notes<textarea id="cNotes" class="input" rows="3">${esc(c?.notes||"")}</textarea></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
-  $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),contactPerson:$("#cContact").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),taxId:$("#cTaxId").value.trim(),billingAddress:$("#cBilling").value.trim(),shippingAddress:$("#cShipping").value.trim(),address:$("#cBilling").value.trim(),notes:$("#cNotes").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal()}
+  modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Customer / Company name<input id="cName" class="input" value="${esc(c?.name||"")}" placeholder="Required"></label><label>Contact person<input id="cContact" class="input" value="${esc(c?.contactPerson||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Tax ID / VAT number<input id="cTaxId" class="input" value="${esc(c?.taxId||"")}"></label><label>Billing address<textarea id="cBilling" class="input" rows="3">${esc(c?.billingAddress||c?.address||"")}</textarea></label><label>Shipping address<textarea id="cShipping" class="input" rows="3">${esc(c?.shippingAddress||"")}</textarea></label><label>Customer notes<textarea id="cNotes" class="input" rows="3">${esc(c?.notes||"")}</textarea></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
+  $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),contactPerson:$("#cContact").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),taxId:$("#cTaxId").value.trim(),billingAddress:$("#cBilling").value.trim(),shippingAddress:$("#cShipping").value.trim(),address:$("#cBilling").value.trim(),notes:$("#cNotes").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal();if(onSaved)onSaved(obj.id)};
 }
 function deleteCustomer(id){if(confirm("Delete this customer? Document history will remain."))mutate(()=>state.customers=state.customers.filter(c=>c.id!==id))}
 function deleteDocument(type,id){if(!confirm(`Delete this ${type.toLowerCase()}?`))return;mutate(()=>{if(type==="Invoice"){const i=state.invoices.find(x=>x.id===id);if(i?.paid)state.transactions=state.transactions.filter(t=>t.reference!==i.number);state.invoices=state.invoices.filter(x=>x.id!==id)}else if(type==="Estimate")state.estimates=state.estimates.filter(x=>x.id!==id);else state.proformas=state.proformas.filter(x=>x.id!==id)})}
@@ -407,17 +461,17 @@ function printInvoice(id,receipt){return printDocument(id,receipt)}
 function findDocument(id){return state.invoices.find(x=>x.id===id)||state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id)}
 function printDocument(id,receipt=false){
   const i=findDocument(id);if(!i)return;const s=state.settings;
-  const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"ESTIMATE / QUOTATION":"PROFORMA INVOICE";
+  const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"QUOTATION":"PROFORMA INVOICE";
   const rows=i.items.map(x=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td>${esc(p?.name||"Item")}</td><td>${esc(p?.sku||"")}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td></tr>`}).join("");
-  const customerAddress=i.customerBillingAddress||i.customerAddress||"";
-  const shipping=i.customerShippingAddress||"";
-  const taxes=i.taxCategory?`<div><span>${esc(i.taxCategory)}</span><strong>${money(0)}</strong></div>`:"";
+  const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
+  const taxes=(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories)).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount)}</strong></div>`).join("");
+  const paid=Number(i.paid||0),balance=Math.max(0,Number(i.total||0)-paid),reserved=!i.delivered&&!i.stockDeducted&&paid>0;
   $("#printArea").innerHTML=`<div class="print-document ${receipt?"receipt-document":""}">
     <div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg: ${esc(s.companyReg)}`:""} ${s.tax?`• Tax/VAT: ${esc(s.tax)}`:""}</p></div></div>
     <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p>${esc(i.number)} • ${esc(i.date)}</p></div>
-    <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName)}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":""}Payment</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(i.status)}<br>Amount paid: ${money(i.paid)}<br>Balance: ${money(Math.max(0,i.total-i.paid))}`:`Customer document`}</div></div>
+    <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName||"Customer not specified")}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":"Document / Payment"}</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(reserved?"Reserved / Awaiting delivery":i.status)}<br>Paid: ${money(paid)}<br>Balance: ${money(balance)}`:`Document status: ${esc(i.status||"Draft")}`}</div></div>
     <table class="print-table"><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div>${taxes}<div><span>Discount</span><strong>${money(i.discount)}</strong></div><div class="grand"><span>Total</span><strong>${money(i.total)}</strong></div></div>
+    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount</span><strong>${money(i.discount)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery charge</span><strong>${money(i.deliveryCharge)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge)}</strong></div>`:""}${taxes}<div class="grand"><span>Total</span><strong>${money(i.total)}</strong></div>${state.invoices.some(x=>x.id===id)?`<div><span>Amount paid</span><strong>${money(paid)}</strong></div><div><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div>
     ${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}
     ${s.salesContract?`<div class="print-note"><strong>Sales contract / terms</strong><div>${esc(s.salesContract)}</div></div>`:""}
     ${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}
@@ -427,6 +481,7 @@ function printDocument(id,receipt=false){
   </div>`;
   setTimeout(()=>window.print(),100);
 }
+
 
 $("#connectDriveBtn").onclick=connectDrive;
 $("#syncBtn").onclick=()=>saveToDrive();

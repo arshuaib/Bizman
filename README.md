@@ -19,3 +19,13 @@ A browser-based stock, sales-document, invoicing and cash-flow manager for Elite
 
 ## Deployment
 Upload the contents to a static host such as Vercel. Add the deployed origin to the Google OAuth client's Authorized JavaScript origins and enable the Google Drive API in the associated Google Cloud project.
+
+## Sales / ERP workflow update
+- New sales begin as Quotations.
+- Quotations can be converted to Proforma Invoices or Sales Invoices.
+- Formal sales documents require a saved customer; walk-in customers are not used for new documents.
+- Delivery and installation/labour charges can be entered per document.
+- Configured tax categories are automatically applied together and printed separately (for example VAT 15%, NHIL 2.5%, GETFund 2.5%).
+- Payments do not deduct physical stock. A paid or part-paid invoice reserves the ordered quantities until delivery is confirmed.
+- Confirming delivery is the stock-reduction event.
+- Stock screens show on-hand, reserved and available quantities, and invoice creation checks available quantities before reserving stock.

@@ -81,12 +81,12 @@
         <section id="stock" class="view">
           <div class="page-head"><div><h2>Stock</h2><p>Products, quantities, cost and selling prices.</p></div><button class="btn btn-primary" data-open-product>+ Add Product</button></div>
           <div class="toolbar"><input id="stockSearch" class="input" placeholder="Search product, SKU or category…"><select id="stockFilter" class="input"><option value="">All stock</option><option value="low">Low stock</option><option value="out">Out of stock</option></select></div>
-          <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Qty</th><th>Cost</th><th>Sell price</th><th>Stock value</th><th></th></tr></thead><tbody id="stockTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Qty / availability</th><th>Cost</th><th>Sell price</th><th>Stock value</th><th></th></tr></thead><tbody id="stockTable"></tbody></table></div>
         </section>
 
         <section id="sales" class="view">
-          <div class="page-head"><div><h2>Sales Documents</h2><p>Create estimates, proforma invoices and invoices. Stock is deducted only after payment or confirmed delivery.</p></div><button class="btn btn-primary" data-open-sale>+ New Document</button></div>
-          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Estimates</option><option value="Proforma Invoice">Proforma invoices</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
+          <div class="page-head"><div><h2>Sales Documents</h2><p>New sales start as quotations. Convert to proforma invoices or invoices. Paid invoice stock is reserved; physical stock is deducted only when delivery is confirmed.</p></div><button class="btn btn-primary" data-open-sale>+ New Document</button></div>
+          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotations</option><option value="Proforma Invoice">Proforma invoices</option><option value="Reserved / Awaiting delivery">Reserved / Awaiting delivery</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
           <div class="table-wrap"><table><thead><tr><th>Document</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="salesTable"></tbody></table></div>
         </section>
 
@@ -102,7 +102,7 @@
         </section>
 
         <section id="customers" class="view">
-          <div class="page-head"><div><h2>Customers</h2><p>Customer records with billing, shipping and tax details.</p></div><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div>
+          <div class="page-head"><div><h2>Customers</h2><p>CRM customer records with billing, shipping, tax and document history.</p></div><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div>
           <div class="toolbar"><input id="customerSearch" class="input" placeholder="Search customers…"></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Billing address</th><th>Documents</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
         </section>
@@ -132,7 +132,9 @@
             <label>Tax/VAT number<input id="setTax" class="input"></label>
             <label>Invoice prefix<input id="setPrefix" class="input"></label>
             <label>Currency<input id="setCurrency" class="input"></label>
-            <label>Tax categories (comma or line separated)<textarea id="setTaxCategories" class="input" rows="3"></textarea></label>
+            <label>Tax categories (all configured categories apply together)<textarea id="setTaxCategories" class="input" rows="4" placeholder="VAT 15%
+NHIL 2.5%
+GETFund 2.5%"></textarea><small class="muted">Enter one category per line or separate with commas. Example: VAT 15%, NHIL 2.5%, GETFund 2.5%.</small></label>
             <label>Default tax rate (%)<input id="setDefaultTaxRate" type="number" min="0" step="0.01" class="input"></label>
             <label>Payment terms<textarea id="setPaymentTerms" class="input" rows="3"></textarea></label>
             <label>Sales contract / terms<textarea id="setSalesContract" class="input" rows="4"></textarea></label>
