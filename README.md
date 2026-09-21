@@ -4,6 +4,7 @@ A mobile-friendly, browser-based business management app for EliteVolt Systems.
 
 ## Included
 - Stock/inventory management
+- Automatic SKU generation for new products (category + product name + unique sequence)
 - Automatic stock deduction when a sale is saved
 - Low-stock and out-of-stock monitoring
 - Sales invoices and payment receipts
