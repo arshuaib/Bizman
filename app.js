@@ -305,11 +305,67 @@ function renderSales(){
   $$('[data-delivery]').forEach(b=>b.onclick=()=>confirmDelivery(b.dataset.delivery));
   $$('[data-convert-pro]').forEach(b=>b.onclick=()=>convertToProforma(b.dataset.convertPro));
   $$('[data-convert-inv]').forEach(b=>b.onclick=()=>convertToInvoice(b.dataset.convertInv));
-  $$('.action-menu-toggle').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const menu=b.closest('.action-menu');document.querySelectorAll('.action-menu.open').forEach(x=>{if(x!==menu)x.classList.remove('open')});menu.classList.toggle('open');b.setAttribute('aria-expanded',menu.classList.contains('open')?'true':'false')});
+  $$('.action-menu-toggle').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const menu=b.closest('.action-menu');
+    const wasOpen=menu.classList.contains('open');
+    document.querySelectorAll('.action-menu.open').forEach(x=>{
+      x.classList.remove('open');
+      const t=x.querySelector('.action-menu-toggle');
+      if(t)t.setAttribute('aria-expanded','false');
+      const list=x.querySelector('.action-menu-list');
+      if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';}
+    });
+    if(wasOpen){b.setAttribute('aria-expanded','false');return;}
+    menu.classList.add('open');
+    b.setAttribute('aria-expanded','true');
+    const list=menu.querySelector('.action-menu-list');
+    if(!list)return;
+    list.style.position='fixed';
+    list.style.visibility='hidden';
+    list.style.display='flex';
+    list.style.flexDirection='column';
+    const br=b.getBoundingClientRect();
+    const lr=list.getBoundingClientRect();
+    const gap=6, pad=8;
+    let top=br.bottom+gap;
+    if(top+lr.height>window.innerHeight-pad){top=Math.max(pad,br.top-lr.height-gap);}
+    if(top+lr.height>window.innerHeight-pad){
+      list.style.maxHeight=Math.max(120,window.innerHeight-top-pad)+'px';
+      list.style.overflowY='auto';
+      const adjusted=list.getBoundingClientRect();
+      top=Math.min(top,window.innerHeight-adjusted.height-pad);
+    }
+    let left=br.right-lr.width;
+    left=Math.max(pad,Math.min(left,window.innerWidth-lr.width-pad));
+    list.style.top=Math.round(top)+'px';
+    list.style.left=Math.round(left)+'px';
+    list.style.right='auto';
+    list.style.bottom='auto';
+    list.style.visibility='visible';
+  });
   $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteDocument(type,id)}});
 }
 function $t(sel){return document.querySelector(sel)}
-document.addEventListener('click',()=>document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open')));
+document.addEventListener('click',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
+  x.classList.remove('open');
+  const t=x.querySelector('.action-menu-toggle');if(t)t.setAttribute('aria-expanded','false');
+  const list=x.querySelector('.action-menu-list');if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';list.style.maxHeight='';list.style.overflowY='';}
+}));
+window.addEventListener('resize',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
+  const b=x.querySelector('.action-menu-toggle'),list=x.querySelector('.action-menu-list');if(!b||!list)return;
+  const br=b.getBoundingClientRect(),lr=list.getBoundingClientRect(),gap=6,pad=8;
+  let top=br.bottom+gap;if(top+lr.height>window.innerHeight-pad)top=Math.max(pad,br.top-lr.height-gap);
+  let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
+  list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';
+}));
+window.addEventListener('scroll',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
+  const b=x.querySelector('.action-menu-toggle'),list=x.querySelector('.action-menu-list');if(!b||!list)return;
+  const br=b.getBoundingClientRect(),lr=list.getBoundingClientRect(),gap=6,pad=8;
+  let top=br.bottom+gap;if(top+lr.height>window.innerHeight-pad)top=Math.max(pad,br.top-lr.height-gap);
+  let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
+  list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';
+},{passive:true}));
 function renderCashflow(){
   const ins=state.transactions.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0),outs=state.transactions.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0);
   $("#cfIn").textContent=money(ins);$("#cfOut").textContent=money(outs);$("#cfNet").textContent=money(ins-outs);
