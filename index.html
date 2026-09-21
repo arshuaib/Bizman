@@ -136,6 +136,8 @@
 NHIL 2.5%
 GETFund 2.5%"></textarea><small class="muted">Enter one category per line or separate with commas. Example: VAT 15%, NHIL 2.5%, GETFund 2.5%.</small></label>
             <label>Default tax rate (%)<input id="setDefaultTaxRate" type="number" min="0" step="0.01" class="input"></label>
+            <label>Quotation / Proforma validity (days)<input id="setValidityDays" type="number" min="1" step="1" class="input" value="7"><small class="muted">Default: 7 days. The created date and valid-until date appear on documents.</small></label>
+            <label style="display:flex;gap:8px;align-items:center"><input id="setTaxEnabled" type="checkbox" checked> Include taxes on sales documents</label>
             <label>Payment terms<textarea id="setPaymentTerms" class="input" rows="3"></textarea></label>
             <label>Sales contract / terms<textarea id="setSalesContract" class="input" rows="4"></textarea></label>
             <label>Default document notes<textarea id="setDocumentNotes" class="input" rows="3"></textarea></label>
