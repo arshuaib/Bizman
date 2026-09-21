@@ -85,9 +85,9 @@
         </section>
 
         <section id="sales" class="view">
-          <div class="page-head"><div><h2>Sales & Invoices</h2><p>Create, print and track invoices and receipts.</p></div><button class="btn btn-primary" data-open-sale>+ New Sale</button></div>
-          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search invoice or customer…"><select id="salesStatus" class="input"><option value="">All payments</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
-          <div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th></th></tr></thead><tbody id="salesTable"></tbody></table></div>
+          <div class="page-head"><div><h2>Sales Documents</h2><p>Create estimates, proforma invoices and invoices. Stock is deducted only after payment or confirmed delivery.</p></div><button class="btn btn-primary" data-open-sale>+ New Document</button></div>
+          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Estimates</option><option value="Proforma Invoice">Proforma invoices</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
+          <div class="table-wrap"><table><thead><tr><th>Document</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="salesTable"></tbody></table></div>
         </section>
 
         <section id="cashflow" class="view">
@@ -102,9 +102,9 @@
         </section>
 
         <section id="customers" class="view">
-          <div class="page-head"><div><h2>Customers</h2><p>Customer records used on invoices.</p></div><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div>
+          <div class="page-head"><div><h2>Customers</h2><p>Customer records with billing, shipping and tax details.</p></div><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div>
           <div class="toolbar"><input id="customerSearch" class="input" placeholder="Search customers…"></div>
-          <div class="table-wrap"><table><thead><tr><th>Name</th><th>Phone</th><th>Email</th><th>Address</th><th>Invoices</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Billing address</th><th>Documents</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
         </section>
 
         <section id="reports" class="view">
@@ -125,12 +125,19 @@
           <div class="page-head"><div><h2>Settings</h2><p>Company information used on printed documents.</p></div><button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button></div>
           <div class="panel form-grid">
             <label>Company name<input id="setName" class="input"></label>
+            <label>Registration number<input id="setCompanyReg" class="input"></label>
             <label>Phone<input id="setPhone" class="input"></label>
             <label>Email<input id="setEmail" class="input"></label>
-            <label>Address<input id="setAddress" class="input"></label>
+            <label>Company address<textarea id="setAddress" class="input" rows="2"></textarea></label>
             <label>Tax/VAT number<input id="setTax" class="input"></label>
             <label>Invoice prefix<input id="setPrefix" class="input"></label>
             <label>Currency<input id="setCurrency" class="input"></label>
+            <label>Tax categories (comma or line separated)<textarea id="setTaxCategories" class="input" rows="3"></textarea></label>
+            <label>Default tax rate (%)<input id="setDefaultTaxRate" type="number" min="0" step="0.01" class="input"></label>
+            <label>Payment terms<textarea id="setPaymentTerms" class="input" rows="3"></textarea></label>
+            <label>Sales contract / terms<textarea id="setSalesContract" class="input" rows="4"></textarea></label>
+            <label>Default document notes<textarea id="setDocumentNotes" class="input" rows="3"></textarea></label>
+            <label>Bank / payment details<textarea id="setBankDetails" class="input" rows="4"></textarea></label>
             <label>Footer note<textarea id="setFooter" class="input" rows="3"></textarea></label>
           </div>
           <div class="panel">
