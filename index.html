@@ -60,7 +60,7 @@
         <section id="dashboard" class="view active">
           <div class="page-head">
             <div><h2>Dashboard</h2><p>Monitor stock, sales and cash flow at a glance.</p></div>
-            <div class="head-actions"><button class="btn btn-primary" data-open-sale>+ New Sale</button><button class="btn btn-outline" data-open-product>+ Add Stock</button></div>
+            <div class="head-actions"><button class="btn btn-primary" data-open-sale>Create Quotation</button><button class="btn btn-outline" data-open-product>+ Add Stock</button></div>
           </div>
           <div class="cards four">
             <div class="metric"><span>Total stock value</span><strong id="mStock">GH₵ 0.00</strong><small id="mStockUnits">0 units</small></div>
@@ -85,7 +85,7 @@
         </section>
 
         <section id="sales" class="view">
-          <div class="page-head"><div><h2>Sales Documents</h2><p>New sales start as quotations. Convert to proforma invoices or invoices. Paid invoice stock is reserved; physical stock is deducted only when delivery is confirmed.</p></div><button class="btn btn-primary" data-open-sale>+ New Document</button></div>
+          <div class="page-head"><div><h2>Sales Documents</h2><p>New sales start as quotations. Convert to proforma invoices or invoices. Paid invoice stock is reserved; physical stock is deducted only when delivery is confirmed.</p></div><button class="btn btn-primary" data-open-sale>Create Quotation</button></div>
           <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotations</option><option value="Proforma Invoice">Proforma invoices</option><option value="Reserved / Awaiting delivery">Reserved / Awaiting delivery</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
           <div class="table-wrap"><table><thead><tr><th>Document</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="salesTable"></tbody></table></div>
         </section>
