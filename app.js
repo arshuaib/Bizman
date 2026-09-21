@@ -40,6 +40,8 @@ function defaultState(){
     products: [],
     customers: [],
     invoices: [],
+    estimates: [],
+    proformas: [],
     transactions: [],
     settings: {
       name:"EliteVolt Systems",
@@ -49,7 +51,14 @@ function defaultState(){
       tax:"",
       prefix:"EVS",
       currency:"GH₵",
-      footer:"Thank you for doing business with EliteVolt Systems."
+      footer:"Thank you for doing business with EliteVolt Systems.",
+      companyReg:"",
+      taxCategories:"VAT 15%, NHIL 2.5%, GETFund 2.5%",
+      defaultTaxRate:0,
+      salesContract:"",
+      documentNotes:"",
+      paymentTerms:"Payment due as stated on the document.",
+      bankDetails:""
     }
   };
 }
@@ -59,7 +68,9 @@ function mergeState(raw){
     ...base,...raw,
     products:Array.isArray(raw?.products)?raw.products:[],
     customers:Array.isArray(raw?.customers)?raw.customers:[],
-    invoices:Array.isArray(raw?.invoices)?raw.invoices:[],
+    invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,stockDeducted:i.stockDeducted??true})):[],
+    estimates:Array.isArray(raw?.estimates)?raw.estimates:[],
+    proformas:Array.isArray(raw?.proformas)?raw.proformas:[],
     transactions:Array.isArray(raw?.transactions)?raw.transactions:[],
     settings:{...base.settings,...(raw?.settings||{})}
   };
@@ -215,14 +226,29 @@ function renderStock(){
   $$("[data-adjust-product]").forEach(b=>b.onclick=()=>openAdjust(b.dataset.adjustProduct));
   $$("[data-delete-product]").forEach(b=>b.onclick=()=>deleteProduct(b.dataset.deleteProduct));
 }
-function renderSales(){
-  const q=($("#salesSearch")?.value||"").toLowerCase(),f=$("#salesStatus")?.value||"";
-  const rows=[...state.invoices].sort((a,b)=>b.date.localeCompare(a.date)).filter(i=>`${i.number} ${i.customerName||""}`.toLowerCase().includes(q)).filter(i=>!f||i.status===f);
-  $("#salesTable").innerHTML=rows.length?rows.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${esc(i.date)}</td><td>${esc(i.customerName||"Walk-in")}</td><td>${money(i.total)}</td><td>${money(i.paid)}</td><td>${money(i.total-i.paid)}</td><td><span class="badge ${i.status==="Paid"?"paid":i.status==="Part-paid"?"part":"unpaid"}">${i.status}</span></td><td><div class="actions"><button class="icon-btn" data-print-invoice="${i.id}">Print</button><button class="icon-btn" data-receipt="${i.id}">Receipt</button><button class="icon-btn" data-delete-invoice="${i.id}">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No invoices found.</td></tr>`;
-  $$("[data-print-invoice]").forEach(b=>b.onclick=()=>printInvoice(b.dataset.printInvoice,false));
-  $$("[data-receipt]").forEach(b=>b.onclick=()=>printInvoice(b.dataset.receipt,true));
-  $$("[data-delete-invoice]").forEach(b=>b.onclick=()=>deleteInvoice(b.dataset.deleteInvoice));
+function allDocuments(){
+  return [
+    ...state.estimates.map(d=>({...d,docType:"Estimate"})),
+    ...state.proformas.map(d=>({...d,docType:"Proforma Invoice"})),
+    ...state.invoices.map(d=>({...d,docType:"Invoice"}))
+  ].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
 }
+function renderSales(){
+  const q=($t("#salesSearch")?.value||"").toLowerCase(),f=$t("#salesStatus")?.value||"";
+  const rows=allDocuments().filter(d=>`${d.number} ${d.customerName||""}`.toLowerCase().includes(q)).filter(d=>!f||d.docType===f||d.status===f);
+  $("#salesTable").innerHTML=rows.length?rows.map(d=>{
+    const isInv=d.docType==="Invoice";
+    const badge=d.status|| (isInv?"Unpaid":"Draft");
+    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Walk-in")}</td><td>${money(d.total)}</td><td>${isInv?money(d.paid):"—"}</td><td>${isInv?money(Math.max(0,d.total-d.paid)):"—"}</td><td><span class="badge ${badge==="Paid"?"paid":badge==="Part-paid"?"part":badge==="Delivered"?"paid":"unpaid"}">${esc(badge)}</span></td><td><div class="actions"><button class="icon-btn" data-print-doc="${d.id}">${isInv?"Print":"Print"}</button>${isInv?`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`:`<button class="icon-btn" data-convert="${d.docType.toLowerCase().startsWith("estimate")?"estimate":"proforma"}:${d.id}">Convert to invoice</button>`}<button class="icon-btn" data-delete-doc="${d.docType}:${d.id}">Delete</button></div></td></tr>`;
+  }).join(""):`<tr><td colspan="8" class="empty">No documents found.</td></tr>`;
+  $$('[data-print-doc]').forEach(b=>b.onclick=()=>printDocument(b.dataset.printDoc));
+  $$('[data-receipt]').forEach(b=>b.onclick=()=>printInvoice(b.dataset.receipt,true));
+  $$('[data-payment]').forEach(b=>b.onclick=()=>recordPayment(b.dataset.payment));
+  $$('[data-delivery]').forEach(b=>b.onclick=()=>confirmDelivery(b.dataset.delivery));
+  $$('[data-convert]').forEach(b=>{const [type,id]=b.dataset.convert.split(":");b.onclick=()=>convertToInvoice(type,id)});
+  $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>deleteDocument(type,id)});
+}
+function $t(sel){return document.querySelector(sel)}
 function renderCashflow(){
   const ins=state.transactions.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0),outs=state.transactions.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0);
   $("#cfIn").textContent=money(ins);$("#cfOut").textContent=money(outs);$("#cfNet").textContent=money(ins-outs);
@@ -234,7 +260,7 @@ function renderCashflow(){
 function renderCustomers(){
   const q=($("#customerSearch")?.value||"").toLowerCase();
   const rows=state.customers.filter(c=>`${c.name} ${c.phone||""} ${c.email||""}`.toLowerCase().includes(q));
-  $("#customersTable").innerHTML=rows.length?rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.phone||"—")}</td><td>${esc(c.email||"—")}</td><td>${esc(c.address||"—")}</td><td>${state.invoices.filter(i=>i.customerId===c.id).length}</td><td><div class="actions"><button class="icon-btn" data-edit-customer="${c.id}">Edit</button><button class="icon-btn" data-delete-customer="${c.id}">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="6" class="empty">No customers found.</td></tr>`;
+  $("#customersTable").innerHTML=rows.length?rows.map(c=>`<tr><td><strong>${esc(c.name)}</strong></td><td>${esc(c.contactPerson||"—")}</td><td>${esc(c.phone||"—")}</td><td>${esc(c.email||"—")}</td><td>${esc(c.billingAddress||c.address||"—")}</td><td>${allDocuments().filter(i=>i.customerId===c.id).length}</td><td><div class="actions"><button class="icon-btn" data-edit-customer="${c.id}">Edit</button><button class="icon-btn" data-delete-customer="${c.id}">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="7" class="empty">No customers found.</td></tr>`;
   $$("[data-edit-customer]").forEach(b=>b.onclick=()=>openCustomer(b.dataset.editCustomer));
   $$("[data-delete-customer]").forEach(b=>b.onclick=()=>deleteCustomer(b.dataset.deleteCustomer));
 }
@@ -245,7 +271,7 @@ function renderReports(){
   const cat={};state.products.forEach(p=>cat[p.category||"Other"]=(cat[p.category||"Other"]||0)+Number(p.qty||0));$("#categorySummary").innerHTML=Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="list-row"><strong>${esc(k)}</strong><span>${v} units</span></div>`).join("")||`<div class="empty">No stock data.</div>`;
 }
 function renderSettings(){
-  const s=state.settings;$("#setName").value=s.name;$("#setPhone").value=s.phone;$("#setEmail").value=s.email;$("#setAddress").value=s.address;$("#setTax").value=s.tax;$("#setPrefix").value=s.prefix;$("#setCurrency").value=s.currency;$("#setFooter").value=s.footer;
+  const s=state.settings;$("#setName").value=s.name;$("#setPhone").value=s.phone;$("#setEmail").value=s.email;$("#setAddress").value=s.address;$("#setTax").value=s.tax;$("#setPrefix").value=s.prefix;$("#setCurrency").value=s.currency;$("#setFooter").value=s.footer;$("#setCompanyReg").value=s.companyReg||"";$("#setTaxCategories").value=s.taxCategories||"";$("#setDefaultTaxRate").value=s.defaultTaxRate??0;$("#setSalesContract").value=s.salesContract||"";$("#setDocumentNotes").value=s.documentNotes||"";$("#setPaymentTerms").value=s.paymentTerms||"";$("#setBankDetails").value=s.bankDetails||"";
 }
 
 function modal(content){$("#modalCard").innerHTML=content;$("#modal").classList.remove("hidden")}
@@ -309,27 +335,59 @@ function openAdjust(id){
   $("#adjustBtn").onclick=()=>{const n=+$("#aQty").value;if(!n){toast("Enter an adjustment quantity.");return}mutate(()=>{p.qty=Math.max(0,Number(p.qty)+n);state.transactions.push({id:uid("tx"),date:today(),type:n>0?"out":"out",category:"Stock adjustment",description:`${$("#aReason").value}: ${$("#aNote").value}`,amount:0,reference:p.sku||p.id})});closeModal();};
 }
 function deleteProduct(id){if(!confirm("Delete this product? Existing invoice history will be retained."))return;mutate(()=>state.products=state.products.filter(p=>p.id!==id))}
-function nextInvoiceNumber(){const prefix=state.settings.prefix||"EVS";const year=new Date().getFullYear();const nums=state.invoices.map(i=>i.number).filter(n=>n?.startsWith(`${prefix}-${year}-`)).map(n=>+(n.split("-").pop())||0);return `${prefix}-${year}-${String(Math.max(0,...nums)+1).padStart(4,"0")}`}
+function nextDocumentNumber(kind){
+  const prefix=state.settings.prefix||"EVS";const year=new Date().getFullYear();
+  const map={estimate:state.estimates,proforma:state.proformas,invoice:state.invoices};
+  const code={estimate:"EST",proforma:"PRO",invoice:"INV"}[kind];
+  const arr=map[kind]||[];
+  const nums=arr.map(d=>d.number).filter(n=>n?.startsWith(`${prefix}-${code}-${year}-`)).map(n=>+(n.split("-").pop())||0);
+  return `${prefix}-${code}-${year}-${String(Math.max(0,...nums)+1).padStart(4,"0")}`;
+}
+function customerSnapshot(c){return {customerId:c?.id||"",customerName:c?.name||"Walk-in customer",customerContactPerson:c?.contactPerson||"",customerPhone:c?.phone||"",customerEmail:c?.email||"",customerBillingAddress:c?.billingAddress||c?.address||"",customerShippingAddress:c?.shippingAddress||"",customerTaxId:c?.taxId||""}}
 function openSale(){
-  if(!state.products.length){toast("Add products before creating a sale.");return}
+  if(!state.products.length){toast("Add products before creating a document.");return}
   const customerOptions=state.customers.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
-  modal(`<div class="modal-head"><h3>New Sale / Invoice</h3><button class="close" data-close-modal>×</button></div>
-  <div class="two-col"><label>Date<input id="sDate" type="date" class="input" value="${today()}"></label><label>Customer<select id="sCustomer" class="input"><option value="">Walk-in customer</option>${customerOptions}</select></label></div>
+  modal(`<div class="modal-head"><h3>New Sales Document</h3><button class="close" data-close-modal>×</button></div>
+  <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="invoice">Sales Invoice</option><option value="estimate">Estimate / Quotation</option><option value="proforma">Proforma Invoice</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${today()}"></label></div>
+  <div class="two-col" style="margin-top:12px"><label>Customer<select id="sCustomer" class="input"><option value="">Walk-in customer</option>${customerOptions}</select></label><label>Tax category<select id="sTaxCategory" class="input"><option value="">No tax</option>${String(state.settings.taxCategories||"").split(/[,\\n]+/).map(x=>x.trim()).filter(Boolean).map(x=>`<option>${esc(x)}</option>`).join("")}</select></label></div>
   <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><button class="btn btn-outline" id="addLine">+ Add item</button></div><div id="saleLines" class="line-items"></div></div>
   <div class="two-col" style="margin-top:14px"><label>Discount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="0"></label><label>Amount paid<input id="sPaid" type="number" min="0" step=".01" class="input" value="0"></label></div>
-  <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">GH₵ 0.00</span></div>
-  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save & Print Invoice</button></div>`);
+  <label style="display:block;margin-top:12px"><input id="sDelivered" type="checkbox" style="width:auto"> Confirm delivered to client (deduct stock)</label>
+  <label style="display:block;margin-top:12px">Document note<textarea id="sNote" class="input" rows="2">${esc(state.settings.documentNotes||"")}</textarea></label>
+  <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">${money(0)}</span></div>
+  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save & Print</button></div>`);
   const addLine=()=>{const row=document.createElement("div");row.className="product-line";row.innerHTML=`<select class="input line-product">${state.products.map(p=>`<option value="${p.id}">${esc(p.name)} — ${p.qty} available</option>`).join("")}</select><input class="input line-qty" type="number" min="1" value="1"><input class="input line-price" type="number" min="0" step=".01" value="0"><span class="line-sub">0.00</span><button class="icon-btn remove-line">×</button>`;$("#saleLines").appendChild(row);const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");price.value=state.products.find(p=>p.id===sel.value)?.price||0;row.oninput=updateTotal;sel.onchange=()=>{price.value=state.products.find(p=>p.id===sel.value)?.price||0;updateTotal()};row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};updateTotal()};
-  const updateTotal=()=>{let sub=0;$$(".product-line").forEach(r=>{const v=+r.querySelector(".line-qty").value||0,p=+r.querySelector(".line-price").value||0;const s=v*p;sub+=s;r.querySelector(".line-sub").textContent=money(s)});const total=Math.max(0,sub-(+$("#sDiscount").value||0));$("#saleTotal").textContent=money(total);};
+  const updateTotal=()=>{let sub=0;$$('.product-line').forEach(r=>{const v=+r.querySelector('.line-qty').value||0,p=+r.querySelector('.line-price').value||0;const a=v*p;sub+=a;r.querySelector('.line-sub').textContent=money(a)});const total=Math.max(0,sub-(+$("#sDiscount").value||0));$("#saleTotal").textContent=money(total)};
   $("#addLine").onclick=addLine;$("#sDiscount").oninput=updateTotal;addLine();
   $("#saveSaleBtn").onclick=()=>{
-    const items=$$(".product-line").map(r=>({productId:r.querySelector(".line-product").value,qty:+r.querySelector(".line-qty").value,price:+r.querySelector(".line-price").value})).filter(x=>x.qty>0);
+    const kind=$("#sDocType").value;const items=$$('.product-line').map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value,price:+r.querySelector('.line-price').value})).filter(x=>x.qty>0);
     if(!items.length)return toast("Add at least one item.");
-    for(const x of items){const p=state.products.find(p=>p.id===x.productId);if(!p||x.qty>p.qty){toast(`Not enough stock for ${p?.name||"item"}.`);return}}
+    if(kind==="invoice" && ((+$("#sPaid").value||0)>0 || $("#sDelivered").checked)){for(const x of items){const p=state.products.find(p=>p.id===x.productId);if(!p||x.qty>p.qty)return toast(`Not enough stock for ${p?.name||"item"}.`)}}
     const subtotal=items.reduce((s,x)=>s+x.qty*x.price,0),discount=+$("#sDiscount").value||0,total=Math.max(0,subtotal-discount),paid=Math.min(total,Math.max(0,+$("#sPaid").value||0));
-    const c=state.customers.find(c=>c.id===$("#sCustomer").value);const inv={id:uid("inv"),number:nextInvoiceNumber(),date:$("#sDate").value,customerId:c?.id||"",customerName:c?.name||"Walk-in customer",customerPhone:c?.phone||"",customerAddress:c?.address||"",items,subtotal,discount,total,paid,status:paid>=total?"Paid":paid>0?"Part-paid":"Unpaid"};
-    mutate(()=>{state.invoices.push(inv);items.forEach(x=>{const p=state.products.find(p=>p.id===x.productId);p.qty-=x.qty});if(paid>0)state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number})});closeModal();printInvoice(inv.id,false);
+    const c=state.customers.find(c=>c.id===$("#sCustomer").value);const snap=customerSnapshot(c);
+    const doc={id:uid(kind),number:nextDocumentNumber(kind),date:$("#sDate").value,items,subtotal,discount,total,paid:kind==="invoice"?paid:0,status:kind==="invoice"?(paid>=total?"Paid":paid>0?"Part-paid":"Unpaid"):"Draft",delivered:kind==="invoice"?!!$("#sDelivered").checked:false,stockDeducted:false,taxCategory:$("#sTaxCategory").value,note:$("#sNote").value.trim(),...snap};
+    mutate(()=>{
+      const arr=kind==="invoice"?state.invoices:kind==="estimate"?state.estimates:state.proformas;arr.push(doc);
+      if(kind==="invoice" && (paid>0 || doc.delivered)) {deductDocumentStock(doc);}
+      if(kind==="invoice" && paid>0) state.transactions.push({id:uid("tx"),date:doc.date,type:"in",category:"Sales",description:`Payment for ${doc.number}`,amount:paid,reference:doc.number});
+    });closeModal();printDocument(doc.id);
   };
+}
+function deductDocumentStock(doc){
+  if(doc.stockDeducted)return;
+  for(const x of doc.items){const p=state.products.find(p=>p.id===x.productId);if(!p || Number(p.qty)<Number(x.qty))throw new Error(`Insufficient stock for ${p?.name||"item"}`);}
+  doc.items.forEach(x=>{const p=state.products.find(p=>p.id===x.productId);p.qty-=Number(x.qty)});doc.stockDeducted=true;
+}
+function recordPayment(id){
+  const inv=state.invoices.find(x=>x.id===id);if(!inv)return;const bal=Math.max(0,Number(inv.total)-Number(inv.paid));if(bal<=0)return toast("Invoice is already fully paid.");
+  modal(`<div class="modal-head"><h3>Record Payment — ${esc(inv.number)}</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><label>Outstanding balance<input class="input" value="${money(bal)}" readonly></label><label>Payment amount<input id="payAmount" type="number" min="0" max="${bal}" step=".01" class="input" value="${bal}"></label><label>Date<input id="payDate" type="date" class="input" value="${today()}"></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePayment">Save Payment</button></div>`);
+  $("#savePayment").onclick=()=>{const amount=Math.min(bal,Math.max(0,+$("#payAmount").value||0));if(amount<=0)return toast("Enter a payment amount.");mutate(()=>{inv.paid=Number(inv.paid||0)+amount;inv.status=inv.paid>=inv.total?"Paid":"Part-paid";if(!inv.stockDeducted)deductDocumentStock(inv);state.transactions.push({id:uid("tx"),date:$("#payDate").value,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount,reference:inv.number})});closeModal()};
+}
+function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to the client? Stock will be deducted.`))return;try{mutate(()=>{inv.delivered=true;if(!inv.stockDeducted)deductDocumentStock(inv);});}catch(e){toast(e.message)} }
+function convertToInvoice(type,id){
+  const source=(type==="estimate"?state.estimates:state.proformas).find(x=>x.id===id);if(!source)return;
+  modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><small class="muted">A payment or part payment will deduct stock when the invoice is created. You can also confirm delivery later.</small></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Create Invoice</button></div>`);
+  $("#convertBtn").onclick=()=>{const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));if(paid<=0)return toast("Enter a payment or part payment to convert this document.");const inv={...source,id:uid("inv"),number:nextDocumentNumber("invoice"),date:$("#convertDate").value,paid,status:paid>=source.total?"Paid":"Part-paid",delivered:false,stockDeducted:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number};try{mutate(()=>{state.invoices.push(inv);deductDocumentStock(inv);state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number});});closeModal();printDocument(inv.id)}catch(e){toast(e.message)}};
 }
 function openCash(){
   modal(`<div class="modal-head"><h3>Record Cash Transaction</h3><button class="close" data-close-modal>×</button></div>
@@ -340,21 +398,30 @@ function openCash(){
 function deleteCash(id){if(confirm("Delete this transaction?"))mutate(()=>state.transactions=state.transactions.filter(t=>t.id!==id))}
 function openCustomer(id=null){
   const c=id?state.customers.find(x=>x.id===id):null;
-  modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Name<input id="cName" class="input" value="${esc(c?.name||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Address<input id="cAddress" class="input" value="${esc(c?.address||"")}"></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
-  $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),address:$("#cAddress").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal()}
+  modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Customer / Company name<input id="cName" class="input" value="${esc(c?.name||"")}"></label><label>Contact person<input id="cContact" class="input" value="${esc(c?.contactPerson||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Tax ID / VAT number<input id="cTaxId" class="input" value="${esc(c?.taxId||"")}"></label><label>Billing address<textarea id="cBilling" class="input" rows="3">${esc(c?.billingAddress||c?.address||"")}</textarea></label><label>Shipping address<textarea id="cShipping" class="input" rows="3">${esc(c?.shippingAddress||"")}</textarea></label><label>Customer notes<textarea id="cNotes" class="input" rows="3">${esc(c?.notes||"")}</textarea></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
+  $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),contactPerson:$("#cContact").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),taxId:$("#cTaxId").value.trim(),billingAddress:$("#cBilling").value.trim(),shippingAddress:$("#cShipping").value.trim(),address:$("#cBilling").value.trim(),notes:$("#cNotes").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal()}
 }
-function deleteCustomer(id){if(confirm("Delete this customer? Invoice history will remain."))mutate(()=>state.customers=state.customers.filter(c=>c.id!==id))}
-function deleteInvoice(id){if(!confirm("Delete this invoice? Stock will NOT be restored automatically. Use a stock adjustment if needed."))return;mutate(()=>{const i=state.invoices.find(x=>x.id===id);if(i?.paid)state.transactions=state.transactions.filter(t=>t.reference!==i.number);state.invoices=state.invoices.filter(x=>x.id!==id)})}
-
-function printInvoice(id,receipt){
-  const i=state.invoices.find(x=>x.id===id);if(!i)return;const s=state.settings;
+function deleteCustomer(id){if(confirm("Delete this customer? Document history will remain."))mutate(()=>state.customers=state.customers.filter(c=>c.id!==id))}
+function deleteDocument(type,id){if(!confirm(`Delete this ${type.toLowerCase()}?`))return;mutate(()=>{if(type==="Invoice"){const i=state.invoices.find(x=>x.id===id);if(i?.paid)state.transactions=state.transactions.filter(t=>t.reference!==i.number);state.invoices=state.invoices.filter(x=>x.id!==id)}else if(type==="Estimate")state.estimates=state.estimates.filter(x=>x.id!==id);else state.proformas=state.proformas.filter(x=>x.id!==id)})}
+function printInvoice(id,receipt){return printDocument(id,receipt)}
+function findDocument(id){return state.invoices.find(x=>x.id===id)||state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id)}
+function printDocument(id,receipt=false){
+  const i=findDocument(id);if(!i)return;const s=state.settings;
+  const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"ESTIMATE / QUOTATION":"PROFORMA INVOICE";
   const rows=i.items.map(x=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td>${esc(p?.name||"Item")}</td><td>${esc(p?.sku||"")}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td></tr>`}).join("");
-  $("#printArea").innerHTML=`<div class="print-document">
-    <div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p><p>${s.tax?`Tax/VAT: ${esc(s.tax)}`:""}</p></div></div>
-    <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":"SALES INVOICE"}</h2><p>${esc(i.number)} • ${esc(i.date)}</p></div>
-    <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName)}<br>${esc(i.customerAddress||"")}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}</div><div class="print-box"><strong>Payment</strong>Status: ${esc(i.status)}<br>Amount paid: ${money(i.paid)}<br>Balance: ${money(i.total-i.paid)}</div></div>
+  const customerAddress=i.customerBillingAddress||i.customerAddress||"";
+  const shipping=i.customerShippingAddress||"";
+  const taxes=i.taxCategory?`<div><span>${esc(i.taxCategory)}</span><strong>${money(0)}</strong></div>`:"";
+  $("#printArea").innerHTML=`<div class="print-document ${receipt?"receipt-document":""}">
+    <div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg: ${esc(s.companyReg)}`:""} ${s.tax?`• Tax/VAT: ${esc(s.tax)}`:""}</p></div></div>
+    <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p>${esc(i.number)} • ${esc(i.date)}</p></div>
+    <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName)}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":""}Payment</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(i.status)}<br>Amount paid: ${money(i.paid)}<br>Balance: ${money(Math.max(0,i.total-i.paid))}`:`Customer document`}</div></div>
     <table class="print-table"><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount</span><strong>${money(i.discount)}</strong></div><div class="grand"><span>Total</span><strong>${money(i.total)}</strong></div></div>
+    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div>${taxes}<div><span>Discount</span><strong>${money(i.discount)}</strong></div><div class="grand"><span>Total</span><strong>${money(i.total)}</strong></div></div>
+    ${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}
+    ${s.salesContract?`<div class="print-note"><strong>Sales contract / terms</strong><div>${esc(s.salesContract)}</div></div>`:""}
+    ${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}
+    ${s.bankDetails?`<div class="print-note"><strong>Bank / payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}
     <div class="print-sign"><div>Prepared by</div><div>Customer acknowledgement</div></div>
     <div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)}</span></div>
   </div>`;
@@ -368,7 +435,7 @@ $$("[data-open-product]").forEach(b=>b.onclick=()=>openProduct());
 $$("[data-open-sale]").forEach(b=>b.onclick=()=>openSale());
 $$("[data-open-cash]").forEach(b=>b.onclick=()=>openCash());
 $$("[data-open-customer]").forEach(b=>b.onclick=()=>openCustomer());
-$("#saveSettingsBtn").onclick=()=>{mutate(()=>Object.assign(state.settings,{name:$("#setName").value.trim()||"EliteVolt Systems",phone:$("#setPhone").value.trim(),email:$("#setEmail").value.trim(),address:$("#setAddress").value.trim(),tax:$("#setTax").value.trim(),prefix:$("#setPrefix").value.trim()||"EVS",currency:$("#setCurrency").value.trim()||"GH₵",footer:$("#setFooter").value.trim()}));toast("Settings saved.")};
+$("#saveSettingsBtn").onclick=()=>{mutate(()=>Object.assign(state.settings,{name:$("#setName").value.trim()||"EliteVolt Systems",phone:$("#setPhone").value.trim(),email:$("#setEmail").value.trim(),address:$("#setAddress").value.trim(),tax:$("#setTax").value.trim(),prefix:$("#setPrefix").value.trim()||"EVS",currency:$("#setCurrency").value.trim()||"GH₵",footer:$("#setFooter").value.trim(),companyReg:$("#setCompanyReg").value.trim(),taxCategories:$("#setTaxCategories").value.trim(),defaultTaxRate:+$("#setDefaultTaxRate").value||0,salesContract:$("#setSalesContract").value.trim(),documentNotes:$("#setDocumentNotes").value.trim(),paymentTerms:$("#setPaymentTerms").value.trim(),bankDetails:$("#setBankDetails").value.trim()}));toast("Settings saved.")};
 $("#manualBackupBtn").onclick=()=>saveToDrive();
 $("#printReportBtn").onclick=()=>{
   const s=state.settings;
