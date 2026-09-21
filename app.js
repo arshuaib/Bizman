@@ -290,12 +290,12 @@ function renderSales(){
     const reserved=isInv&&!d.delivered&&!d.stockDeducted&&paid>0;
     let badge=d.status||"Draft"; if(reserved) badge="Reserved / Awaiting delivery";
     const cls=reserved?"part":badge==="Paid"||badge==="Delivered"?"paid":badge==="Part-paid"?"part":"unpaid";
-    let actions=`<button class="icon-btn" data-print-doc="${d.id}">Print</button><button class="icon-btn" data-copy-doc="${d.id}">Copy as quotation</button>`;
-    if(d.docType==="Estimate"){actions+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
-    } else if(d.docType==="Proforma Invoice"){actions+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
-    } else actions+=`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`;
-    actions+=`<button class="icon-btn" data-delete-doc="${d.docType}:${d.id}">Delete</button>`;
-    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total)}</td><td>${isInv?money(paid):"—"}</td><td>${isInv?money(balance):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="actions">${actions}</div></td></tr>`;
+    let menu=`<button class="icon-btn" data-print-doc="${d.id}">Print</button><button class="icon-btn" data-copy-doc="${d.id}">Copy as quotation</button>`;
+    if(d.docType==="Estimate"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+    } else if(d.docType==="Proforma Invoice"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+    } else menu+=`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`;
+    menu+=`<button class="icon-btn danger-action" data-delete-doc="${d.docType}:${d.id}">Delete</button>`;
+    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total)}</td><td>${isInv?money(paid):"—"}</td><td>${isInv?money(balance):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No documents found.</td></tr>`;
   $$('[data-print-doc]').forEach(b=>b.onclick=()=>printDocument(b.dataset.printDoc));
   $$('[data-copy-doc]').forEach(b=>b.onclick=()=>openCopyQuotation(b.dataset.copyDoc));
@@ -305,9 +305,11 @@ function renderSales(){
   $$('[data-delivery]').forEach(b=>b.onclick=()=>confirmDelivery(b.dataset.delivery));
   $$('[data-convert-pro]').forEach(b=>b.onclick=()=>convertToProforma(b.dataset.convertPro));
   $$('[data-convert-inv]').forEach(b=>b.onclick=()=>convertToInvoice(b.dataset.convertInv));
-  $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>deleteDocument(type,id)});
+  $$('.action-menu-toggle').forEach(b=>b.onclick=(e)=>{e.stopPropagation();const menu=b.closest('.action-menu');document.querySelectorAll('.action-menu.open').forEach(x=>{if(x!==menu)x.classList.remove('open')});menu.classList.toggle('open');b.setAttribute('aria-expanded',menu.classList.contains('open')?'true':'false')});
+  $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteDocument(type,id)}});
 }
 function $t(sel){return document.querySelector(sel)}
+document.addEventListener('click',()=>document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open')));
 function renderCashflow(){
   const ins=state.transactions.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0),outs=state.transactions.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0);
   $("#cfIn").textContent=money(ins);$("#cfOut").textContent=money(outs);$("#cfNet").textContent=money(ins-outs);
@@ -576,7 +578,8 @@ function deleteDocument(type,id){
     if(linkedTx){toast("Delete protection: this invoice has linked transactions.");return;}
   }
   const message=type==="Invoice"?`Delete unpaid invoice ${d.number}?`:type==="Estimate"?`Delete quotation ${d.number}?`:`Delete proforma invoice ${d.number}?`;
-  if(!confirm(`${message} This action cannot be undone.`))return;
+  if(!confirm(`${message}\n\nFirst confirmation: continue?`))return;
+  if(!confirm(`FINAL CONFIRMATION\n\nYou are about to permanently delete ${d.number}.\nThis action cannot be undone.\n\nPress OK only if you are certain.`))return;
   mutate(()=>{
     if(type==="Invoice")state.invoices=state.invoices.filter(x=>x.id!==id);
     else if(type==="Estimate")state.estimates=state.estimates.filter(x=>x.id!==id);
@@ -598,13 +601,14 @@ async function waitForPrintAssets(){
 async function printDocument(id,receipt=false){
   const i=findDocument(id);if(!i)return;const s=state.settings;
   const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"QUOTATION":"PROFORMA INVOICE";
+  const validUntil=i.validUntil || ((type!=="SALES INVOICE") ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
   const rows=i.items.map(x=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td>${esc(p?.name||"Item")}</td><td>${esc(p?.sku||"")}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td></tr>`}).join("");
   const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
   const taxes=(i.taxEnabled===false||s.taxEnabled===false?[]:(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories))).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount)}</strong></div>`).join("");
   const paid=Number(i.paid||0),balance=Math.max(0,Number(i.total||0)-paid),reserved=!i.delivered&&!i.stockDeducted&&paid>0;
   $("#printArea").innerHTML=`<div class="print-document ${receipt?"receipt-document":""}">
     <div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg: ${esc(s.companyReg)}`:""} ${s.tax?`• Tax/VAT: ${esc(s.tax)}`:""}</p></div></div>
-    <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p>${esc(i.number)} • Created: ${esc(i.date)}${i.validUntil?` • Valid until: ${esc(i.validUntil)}`:""}</p></div>
+    <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p><strong>Document No.:</strong> ${esc(i.number)} &nbsp; • &nbsp; <strong>Created date:</strong> ${esc(i.date)}${validUntil?` &nbsp; • &nbsp; <strong>Valid until:</strong> ${esc(validUntil)}`:""}</p></div>
     <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName||"Customer not specified")}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":"Document / Payment"}</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(reserved?"Reserved / Awaiting delivery":i.status)}<br>Paid: ${money(paid)}<br>Balance: ${money(balance)}`:`Document status: ${esc(i.status||"Draft")}`}</div></div>
     <table class="print-table"><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
     <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount ${i.subtotal?`(${(Number(i.discount||0)/Number(i.subtotal||1)*100).toFixed(2)}%)`:"(0%)"}</span><strong>${money(i.discount)}</strong></div><div><span>Delivery charge</span><strong>${money(i.deliveryCharge||0)}</strong></div><div><span>Installation / labour</span><strong>${money(i.laborCharge||0)}</strong></div><div class="print-divider"></div>${taxes}<div class="grand"><span>TOTAL</span><strong>${money(i.total)}</strong></div>${state.invoices.some(x=>x.id===id)?`<div><span>Amount paid</span><strong>${money(paid)}</strong></div><div><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div>
