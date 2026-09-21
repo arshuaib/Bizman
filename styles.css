@@ -36,9 +36,9 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
   html,body{background:#fff!important;margin:0!important;padding:0!important}
   body>*{display:none!important}
   #printArea{display:block!important;width:100%!important;margin:0!important;padding:0!important;position:static!important;left:auto!important;top:auto!important}
-  .print-document{width:100%;min-height:0!important;height:auto!important;margin:0!important;padding:0!important;position:relative;color:#182737;background:#fff;overflow:visible;page-break-after:auto;break-after:auto}
+  .print-document{width:100%;min-height:0!important;height:auto!important;margin:0!important;padding:0!important;position:relative;color:#182737;background:#fff;overflow:visible;page-break-after:auto;break-after:auto;page-break-inside:auto;break-inside:auto}
   .print-document:before{content:"";position:absolute;inset:0;background:url('assets/elitevolt-logo.png') center 48%/105mm auto no-repeat;opacity:.035;pointer-events:none;z-index:0}
-  .print-document>*{position:relative;z-index:1}.print-document{break-inside:avoid}.print-table{break-inside:auto}.print-table tr{break-inside:avoid;break-after:auto}
+  .print-document>*{position:relative;z-index:1}.print-document{break-inside:auto;page-break-inside:auto}.print-table{break-inside:auto}.print-table tr{break-inside:avoid;break-after:auto}
   .print-head{display:flex;align-items:flex-start;justify-content:space-between;border-bottom:2px solid #79c900;padding-bottom:6px}
   .print-head img{width:55px;height:55px;object-fit:contain}
   .print-company{text-align:right}.print-company h1{font-size:14px;margin:0;color:#0b2037}.print-company p{font-size:8px;line-height:1.35;margin:2px 0}

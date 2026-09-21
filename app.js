@@ -390,7 +390,16 @@ function openAdjust(id){
   <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="adjustBtn">Apply</button></div>`);
   $("#adjustBtn").onclick=()=>{const n=+$("#aQty").value;if(!n){toast("Enter an adjustment quantity.");return}mutate(()=>{p.qty=Math.max(0,Number(p.qty)+n);state.transactions.push({id:uid("tx"),date:today(),type:n>0?"out":"out",category:"Stock adjustment",description:`${$("#aReason").value}: ${$("#aNote").value}`,amount:0,reference:p.sku||p.id})});closeModal();};
 }
-function deleteProduct(id){if(!confirm("Delete this product? Existing invoice history will be retained."))return;mutate(()=>state.products=state.products.filter(p=>p.id!==id))}
+function deleteProduct(id){
+  const p=state.products.find(x=>x.id===id); if(!p)return;
+  const referenced=allDocuments().filter(d=>d.items?.some(x=>x.productId===id));
+  const reserved=reservedQty(id)>0;
+  if(referenced.length){toast("Delete protection: this item is already used in sales documents. Edit or archive it instead.");return}
+  if(reserved){toast("Delete protection: this item has reserved stock for a customer.");return}
+  if(Number(p.qty||0)>0 && !confirm(`Delete ${p.name}? This will remove ${p.qty} unit(s) currently in stock. Continue?`))return;
+  if(Number(p.qty||0)<=0 && !confirm(`Delete ${p.name}? This action cannot be undone.`))return;
+  mutate(()=>state.products=state.products.filter(x=>x.id!==id));
+}
 function nextDocumentNumber(kind){
   const prefix=state.settings.prefix||"EVS";const year=new Date().getFullYear();
   const map={estimate:state.estimates,proforma:state.proformas,invoice:state.invoices};
@@ -513,17 +522,53 @@ function openCash(){
   <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCashBtn">Save Transaction</button></div>`);
   $("#saveCashBtn").onclick=()=>{const a=+$("#tAmount").value;if(a<=0)return toast("Enter an amount.");mutate(()=>state.transactions.push({id:uid("tx"),date:$("#tDate").value,type:$("#tType").value,category:$("#tCat").value.trim(),description:$("#tDesc").value.trim(),amount:a,reference:$("#tRef").value.trim()}));closeModal()};
 }
-function deleteCash(id){if(confirm("Delete this transaction?"))mutate(()=>state.transactions=state.transactions.filter(t=>t.id!==id))}
+function deleteCash(id){
+  const t=state.transactions.find(x=>x.id===id); if(!t)return;
+  if(t.reference && state.invoices.some(i=>i.number===t.reference)){toast("Delete protection: this transaction is linked to an invoice. Manage it from the invoice payment history.");return}
+  if(confirm("Delete this cash transaction? This action cannot be undone."))mutate(()=>state.transactions=state.transactions.filter(x=>x.id!==id));
+}
 function openCustomer(id=null,onSaved=null){
   const c=id?state.customers.find(x=>x.id===id):null;
   modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Customer / Company name<input id="cName" class="input" value="${esc(c?.name||"")}" placeholder="Required"></label><label>Contact person<input id="cContact" class="input" value="${esc(c?.contactPerson||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Tax ID / VAT number<input id="cTaxId" class="input" value="${esc(c?.taxId||"")}"></label><label>Billing address<textarea id="cBilling" class="input" rows="3">${esc(c?.billingAddress||c?.address||"")}</textarea></label><label>Shipping address<textarea id="cShipping" class="input" rows="3">${esc(c?.shippingAddress||"")}</textarea></label><label>Customer notes<textarea id="cNotes" class="input" rows="3">${esc(c?.notes||"")}</textarea></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
   $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),contactPerson:$("#cContact").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),taxId:$("#cTaxId").value.trim(),billingAddress:$("#cBilling").value.trim(),shippingAddress:$("#cShipping").value.trim(),address:$("#cBilling").value.trim(),notes:$("#cNotes").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal();if(onSaved)onSaved(obj.id)};
 }
-function deleteCustomer(id){if(confirm("Delete this customer? Document history will remain."))mutate(()=>state.customers=state.customers.filter(c=>c.id!==id))}
-function deleteDocument(type,id){if(!confirm(`Delete this ${type.toLowerCase()}?`))return;mutate(()=>{if(type==="Invoice"){const i=state.invoices.find(x=>x.id===id);if(i?.paid)state.transactions=state.transactions.filter(t=>t.reference!==i.number);state.invoices=state.invoices.filter(x=>x.id!==id)}else if(type==="Estimate")state.estimates=state.estimates.filter(x=>x.id!==id);else state.proformas=state.proformas.filter(x=>x.id!==id)})}
+function deleteCustomer(id){
+  const c=state.customers.find(x=>x.id===id); if(!c)return;
+  const linked=allDocuments().filter(d=>d.customerId===id);
+  if(linked.length){toast("Delete protection: this customer has sales documents. Keep the customer record for CRM history.");return}
+  if(confirm(`Delete customer ${c.name}? This action cannot be undone.`))mutate(()=>state.customers=state.customers.filter(x=>x.id!==id));
+}
+function deleteDocument(type,id){
+  const collection=type==="Invoice"?state.invoices:type==="Estimate"?state.estimates:state.proformas;
+  const d=collection.find(x=>x.id===id); if(!d)return;
+  if(type==="Invoice"){
+    if(Number(d.paid||0)>0 || d.delivered || d.stockDeducted || d.reserved){
+      toast("Delete protection: paid, reserved or delivered invoices cannot be deleted. Keep them for audit history.");return;
+    }
+    const linkedTx=state.transactions.some(t=>t.reference===d.number);
+    if(linkedTx){toast("Delete protection: this invoice has linked transactions.");return;}
+  }
+  const message=type==="Invoice"?`Delete unpaid invoice ${d.number}?`:type==="Estimate"?`Delete quotation ${d.number}?`:`Delete proforma invoice ${d.number}?`;
+  if(!confirm(`${message} This action cannot be undone.`))return;
+  mutate(()=>{
+    if(type==="Invoice")state.invoices=state.invoices.filter(x=>x.id!==id);
+    else if(type==="Estimate")state.estimates=state.estimates.filter(x=>x.id!==id);
+    else state.proformas=state.proformas.filter(x=>x.id!==id);
+  });
+}
 function printInvoice(id,receipt){return printDocument(id,receipt)}
 function findDocument(id){return state.invoices.find(x=>x.id===id)||state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id)}
-function printDocument(id,receipt=false){
+async function waitForPrintAssets(){
+  const images=[...document.querySelectorAll("#printArea img")];
+  await Promise.all(images.map(img=>new Promise(resolve=>{
+    if(img.complete && img.naturalWidth>0){resolve();return}
+    const done=()=>{img.removeEventListener("load",done);img.removeEventListener("error",done);resolve()};
+    img.addEventListener("load",done,{once:true});img.addEventListener("error",done,{once:true});
+  })));
+  if(document.fonts?.ready) try{await document.fonts.ready}catch(e){}
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+}
+async function printDocument(id,receipt=false){
   const i=findDocument(id);if(!i)return;const s=state.settings;
   const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"QUOTATION":"PROFORMA INVOICE";
   const rows=i.items.map(x=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td>${esc(p?.name||"Item")}</td><td>${esc(p?.sku||"")}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td></tr>`}).join("");
@@ -543,7 +588,8 @@ function printDocument(id,receipt=false){
     <div class="print-sign"><div>Prepared by</div><div>Customer acknowledgement</div></div>
     <div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)}</span></div>
   </div>`;
-  setTimeout(()=>window.print(),100);
+  await waitForPrintAssets();
+  window.print();
 }
 
 
@@ -559,7 +605,7 @@ $("#manualBackupBtn").onclick=()=>saveToDrive();
 $("#printReportBtn").onclick=()=>{
   const s=state.settings;
   $("#printArea").innerHTML=`<div class="print-document"><div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p></div></div><div class="print-title"><h2>BUSINESS SUMMARY REPORT</h2><p>Generated ${today()}</p></div><div class="print-meta"><div class="print-box"><strong>Inventory</strong>Products: ${state.products.length}<br>Units on hand: ${state.products.reduce((a,p)=>a+Number(p.qty||0),0)}<br>Stock value: ${money(stockValue())}</div><div class="print-box"><strong>Sales</strong>Invoices: ${state.invoices.length}<br>Total sales: ${money(salesTotal())}<br>Total paid: ${money(paidTotal())}</div></div><table class="print-table"><thead><tr><th>Product</th><th>SKU</th><th>Category</th><th>Qty</th><th>Stock value</th></tr></thead><tbody>${state.products.map(p=>`<tr><td>${esc(p.name)}</td><td>${esc(p.sku||"")}</td><td>${esc(p.category||"")}</td><td>${p.qty}</td><td>${money(p.qty*p.cost)}</td></tr>`).join("")}</tbody></table><div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)}</span></div></div>`;
-  setTimeout(()=>window.print(),100);
+  waitForPrintAssets().then(()=>window.print());
 };
 
 ["stockSearch","stockFilter","salesSearch","salesStatus","customerSearch"].forEach(id=>{const el=$("#"+id);el?.addEventListener("input",renderAll);el?.addEventListener("change",renderAll)});
