@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "products": [
+    {
+      "id": "prod_demo_1",
+      "name": "Solar Panel 550W",
+      "sku": "PV-550",
+      "category": "Solar Panels",
+      "qty": 12,
+      "minQty": 3,
+      "cost": 850,
+      "price": 1150
+    },
+    {
+      "id": "prod_demo_2",
+      "name": "Deye 6kW Hybrid Inverter",
+      "sku": "INV-6K",
+      "category": "Inverters",
+      "qty": 3,
+      "minQty": 1,
+      "cost": 14500,
+      "price": 17500
+    }
+  ],
+  "customers": [],
+  "invoices": [],
+  "transactions": [],
+  "settings": {
+    "name": "EliteVolt Systems",
+    "phone": "",
+    "email": "",
+    "address": "",
+    "tax": "",
+    "prefix": "EVS",
+    "currency": "GH\u20b5",
+    "footer": "Thank you for doing business with EliteVolt Systems."
+  }
+}
