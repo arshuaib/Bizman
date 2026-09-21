@@ -269,11 +269,32 @@ function renderStock(){
   $("#stockTable").innerHTML=rows.length?rows.map(p=>{
     const reserved=reservedQty(p.id),avail=Math.max(0,Number(p.qty||0)-reserved);
     const badge=avail<=0?"out":avail<=Number(p.minQty||0)?"part":"ok";
-    return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku||"—")}</td><td>${esc(p.category||"—")}</td><td><span class="badge ${badge}">${p.qty} on hand</span><small class="table-sub">${reserved} reserved • ${avail} available</small></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td>${money(p.qty*p.cost)}</td><td><div class="actions"><button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn" data-delete-product="${p.id}">Delete</button></div></td></tr>`;
+    const menu=`<button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn danger-action" data-delete-product="${p.id}">Delete</button>`;
+    return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku||"—")}</td><td>${esc(p.category||"—")}</td><td><span class="badge ${badge}">${p.qty} on hand</span><small class="table-sub">${reserved} reserved • ${avail} available</small></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td>${money(p.qty*p.cost)}</td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No products found.</td></tr>`;
-  $("[data-edit-product]") && $$('[data-edit-product]').forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
+  $$('[data-edit-product]').forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
   $$('[data-adjust-product]').forEach(b=>b.onclick=()=>openAdjust(b.dataset.adjustProduct));
-  $$('[data-delete-product]').forEach(b=>b.onclick=()=>deleteProduct(b.dataset.deleteProduct));
+  $$('[data-delete-product]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteProduct(b.dataset.deleteProduct)});
+  $$('#stockTable .action-menu-toggle').forEach(b=>b.onclick=(e)=>{
+    e.stopPropagation();
+    const menu=b.closest('.action-menu');
+    const wasOpen=menu.classList.contains('open');
+    document.querySelectorAll('.action-menu.open').forEach(x=>{
+      x.classList.remove('open');
+      const t=x.querySelector('.action-menu-toggle'); if(t)t.setAttribute('aria-expanded','false');
+      const list=x.querySelector('.action-menu-list'); if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';list.style.maxHeight='';list.style.overflowY='';}
+    });
+    if(wasOpen){b.setAttribute('aria-expanded','false');return;}
+    menu.classList.add('open'); b.setAttribute('aria-expanded','true');
+    const list=menu.querySelector('.action-menu-list'); if(!list)return;
+    list.style.position='fixed'; list.style.visibility='hidden'; list.style.display='flex'; list.style.flexDirection='column';
+    const br=b.getBoundingClientRect(), gap=6, pad=8;
+    let lr=list.getBoundingClientRect(), top=br.bottom+gap;
+    if(top+lr.height>window.innerHeight-pad) top=Math.max(pad,br.top-lr.height-gap);
+    if(top+lr.height>window.innerHeight-pad){list.style.maxHeight=Math.max(120,window.innerHeight-top-pad)+'px';list.style.overflowY='auto';lr=list.getBoundingClientRect();top=Math.min(top,window.innerHeight-lr.height-pad);}
+    let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
+    list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';list.style.right='auto';list.style.bottom='auto';list.style.visibility='visible';
+  });
 }
 function allDocuments(){
   return [
