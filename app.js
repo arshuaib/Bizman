@@ -53,7 +53,7 @@ function defaultState(){
       currency:"GH₵",
       footer:"Thank you for doing business with EliteVolt Systems.",
       companyReg:"",
-      taxCategories:"VAT 15%, NHIL 2.5%, GETFund 2.5%",
+      taxCategories:"NHIL 2.5%, GETFund 2.5%, VAT 15%",
       defaultTaxRate:0,
       salesContract:"",
       documentNotes:"",
@@ -192,6 +192,10 @@ function lastMonths(n=6){
 function salesTotal(){return state.invoices.reduce((s,i)=>s+Number(i.total||0),0)}
 function paidTotal(){return state.invoices.reduce((s,i)=>s+Number(i.paid||0),0)}
 function stockValue(){return state.products.reduce((s,p)=>s+Number(p.qty||0)*Number(p.cost||0),0)}
+function orderTaxCategories(categories){
+  const rank=(name)=>{const n=String(name||"").toLowerCase().replace(/[^a-z]/g,"");if(n.includes("nhil"))return 1;if(n.includes("getfund")||n.includes("getfundlevy"))return 2;if(n.includes("vat"))return 3;return 10;};
+  return [...categories].sort((a,b)=>rank(a.name)-rank(b.name));
+}
 function parseTaxCategories(raw){
   return String(raw||"").split(/[,\n]+/).map(x=>x.trim()).filter(Boolean).map(label=>{
     const m=label.match(/^(.*?)[\s:=-]*([0-9]+(?:\.[0-9]+)?)\s*%?$/);
@@ -200,7 +204,7 @@ function parseTaxCategories(raw){
 }
 function taxBreakdown(base, raw){
   const categories=parseTaxCategories(raw);
-  return categories.map(x=>({...x,amount:base*x.rate/100}));
+  return orderTaxCategories(categories).map(x=>({...x,amount:base*x.rate/100}));
 }
 function documentTaxBase(doc){return Math.max(0,Number(doc.subtotal||0)-Number(doc.discount||0)+Number(doc.deliveryCharge||0)+Number(doc.laborCharge||0))}
 function reservedQty(productId, excludeId=""){
@@ -211,9 +215,11 @@ function availableQty(productId, excludeId=""){
   const p=state.products.find(x=>x.id===productId);return Math.max(0,Number(p?.qty||0)-reservedQty(productId,excludeId));
 }
 function stockAvailabilityWarnings(items, excludeId=""){
-  return items.map(x=>{
-    const p=state.products.find(p=>p.id===x.productId);const available=availableQty(x.productId,excludeId);
-    return p&&Number(x.qty)>available?`${p.name}: ${available} available (${reservedQty(x.productId,excludeId)} reserved), ${x.qty} requested.`:null;
+  const totals={};
+  items.forEach(x=>{if(x?.productId) totals[x.productId]=(totals[x.productId]||0)+Number(x.qty||0);});
+  return Object.entries(totals).map(([productId,requested])=>{
+    const p=state.products.find(p=>p.id===productId);const available=availableQty(productId,excludeId);
+    return p&&requested>available?`${p.name}: ${available} available (${reservedQty(productId,excludeId)} reserved), ${requested} requested.`:null;
   }).filter(Boolean);
 }
 function taxesForDoc(doc){return taxBreakdown(documentTaxBase(doc),state.settings.taxCategories)}
@@ -239,7 +245,7 @@ function renderDashboard(){
   const low=state.products.filter(p=>Number(p.qty||0)-reservedQty(p.id)<=Number(p.minQty||0));
   $("#lowStockList").innerHTML=low.length?low.slice(0,8).map(p=>`<div class="list-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.sku||"No SKU")}</small></div><span class="badge ${p.qty<=0?"out":"part"}">${p.qty} left</span></div>`).join(""):`<div class="empty">No low-stock items.</div>`;
   const recent=[...state.invoices].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
-  $("#recentSalesList").innerHTML=recent.length?recent.map(i=>`<div class="list-row"><div><strong>${esc(i.number)}</strong><small>${esc(i.customerName||"Walk-in")} • ${esc(i.date)}</small></div><strong>${money(i.total)}</strong></div>`).join(""):`<div class="empty">No sales recorded.</div>`;
+  $("#recentSalesList").innerHTML=recent.length?recent.map(i=>`<div class="list-row"><div><strong>${esc(i.number)}</strong><small>${esc(i.customerName||"Customer missing")} • ${esc(i.date)}</small></div><strong>${money(i.total)}</strong></div>`).join(""):`<div class="empty">No sales recorded.</div>`;
 }
 function destroyChart(k){if(charts[k]){charts[k].destroy();charts[k]=null}}
 function renderCashChart(){
@@ -327,7 +333,7 @@ function modal(content){$("#modalCard").innerHTML=content;$("#modal").classList.
 function closeModal(){$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}
 document.addEventListener("click",e=>{if(e.target.matches("[data-close-modal]"))closeModal()});
 
-function openProduct(id=null){
+function openProduct(id=null,onSaved=null){
   const p=id?state.products.find(x=>x.id===id):null;
   const existingSku=p?.sku||"";
   modal(`<div class="modal-head"><h3>${p?"Edit":"Add"} Product</h3><button class="close" data-close-modal>×</button></div>
@@ -374,6 +380,7 @@ function openProduct(id=null){
     };
     mutate(()=>{if(p)Object.assign(p,obj);else state.products.push(obj)});
     closeModal();
+    if(onSaved) onSaved(obj.id);
   };
 }
 function openAdjust(id){
@@ -400,30 +407,63 @@ function openSale(){
   if(!state.products.length){toast("Add products before creating a quotation.");return}
   const taxLabels=parseTaxCategories(state.settings.taxCategories);
   modal(`<div class="modal-head"><h3>New Quotation</h3><button class="close" data-close-modal>×</button></div>
-  <p class="muted">Every new sale starts as a quotation. Convert it to a proforma invoice or invoice when appropriate. Stock is deducted only after delivery.</p>
+  <p class="muted">Every new sale starts as a quotation. Stock is not reduced until delivery is confirmed. Paid invoices reserve stock until delivery.</p>
   <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="estimate">Quotation</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${today()}"></label></div>
-  <div class="two-col" style="margin-top:12px"><label>Customer ${customerSelectHtml()}</label><div><label>Customer billing/shipping details</label><div id="selectedCustomerInfo" class="selected-customer">Select a customer. Walk-in sales are not used for formal documents.</div></div></div>
-  <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><button class="btn btn-outline" id="addLine">+ Add item</button></div><div id="saleLines" class="line-items"></div></div>
-  <div class="form-grid" style="margin-top:14px"><label>Discount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="0"></label><label>Delivery charge<input id="sDelivery" type="number" min="0" step=".01" class="input" value="0"></label><label>Installation / labor charge<input id="sLabor" type="number" min="0" step=".01" class="input" value="0"></label></div>
-  <div class="panel" style="margin-top:14px"><strong>Taxes applied automatically</strong><div class="muted" style="margin-top:5px">${taxLabels.length?taxLabels.map(x=>`${esc(x.name)} ${x.rate}%`).join(" + "):"No configured taxes"}</div></div>
+  <div class="two-col" style="margin-top:12px"><div><label>Customer ${customerSelectHtml()}</label></div><div><label>Customer details</label><div id="selectedCustomerInfo" class="selected-customer">Select a customer. Walk-in customers are not used for formal documents.</div></div></div>
+  <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><div class="actions"><button class="btn btn-outline" id="quickAddStock">+ Add item to stock</button><button class="btn btn-outline" id="addLine">+ Add item</button></div></div><div id="saleLines" class="line-items"></div><div id="stockWarning" class="stock-warning hidden"></div></div>
+  <div class="form-grid" style="margin-top:14px"><label>Discount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="0"></label><label>Delivery charge<input id="sDelivery" type="number" min="0" step=".01" class="input" value="0"></label><label>Installation / labour charge<input id="sLabor" type="number" min="0" step=".01" class="input" value="0"></label></div>
+  <div class="panel" style="margin-top:14px"><strong>Taxes applied</strong><div class="muted" style="margin-top:5px">${taxLabels.length?taxLabels.map(x=>`${esc(x.name)} ${x.rate}%`).join(" + "):"No configured taxes"}</div></div>
   <label style="display:block;margin-top:12px">Document note<textarea id="sNote" class="input" rows="2">${esc(state.settings.documentNotes||"")}</textarea></label>
   <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">${money(0)}</span></div>
-  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save Quotation & Print</button></div>`);
+  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save Quotation</button></div>`);
+
   function refreshCustomerInfo(){
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);
-    $("#selectedCustomerInfo").innerHTML=c?`<strong>${esc(c.name)}</strong><br>${esc(c.phone||"")} ${c.email?`• ${esc(c.email)}`:""}<br>${esc(c.billingAddress||"")}${c.shippingAddress?`<br>Ship: ${esc(c.shippingAddress)}`:""}`:"<span class='muted'>Select a customer. Walk-in sales are not used for formal documents.</span>";
+    $("#selectedCustomerInfo").innerHTML=c?`<strong>${esc(c.name)}</strong><br>${esc(c.phone||"")} ${c.email?`• ${esc(c.email)}`:""}<br>${esc(c.billingAddress||"")}${c.shippingAddress?`<br>Ship: ${esc(c.shippingAddress)}`:""}`:"<span class='muted'>Select a customer. Walk-in customers are not used for formal documents.</span>";
   }
   $("#addCustomerInline").onclick=()=>openCustomer(null,id=>{ $("#sCustomer").value=id; refreshCustomerInfo(); });
   $("#sCustomer").onchange=refreshCustomerInfo;
-  const addLine=()=>{const row=document.createElement("div");row.className="product-line";row.innerHTML=`<select class="input line-product">${state.products.map(p=>`<option value="${p.id}">${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}</select><input class="input line-qty" type="number" min="1" value="1"><input class="input line-price" type="number" min="0" step=".01" value="0"><span class="line-sub">0.00</span><button class="icon-btn remove-line">×</button>`;$("#saleLines").appendChild(row);const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");price.value=state.products.find(p=>p.id===sel.value)?.price||0;row.oninput=updateTotal;sel.onchange=()=>{price.value=state.products.find(p=>p.id===sel.value)?.price||0;updateTotal()};row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};updateTotal()};
-  const updateTotal=()=>{const items=$$('.product-line').map(r=>({qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0}));const subtotal=items.reduce((s,x)=>s+x.qty*x.price,0),discount=+$("#sDiscount").value||0,delivery=+$("#sDelivery").value||0,labor=+$("#sLabor").value||0,base=Math.max(0,subtotal-discount+delivery+labor),tax=taxBreakdown(base,state.settings.taxCategories).reduce((s,x)=>s+x.amount,0);$("#saleTotal").textContent=money(base+tax)};
-  $("#addLine").onclick=addLine;$("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;addLine();
+
+  const productOptions=(selected="")=>`<option value="">Select item…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}`;
+  const addLine=(selectedId="")=>{
+    const row=document.createElement("div");row.className="product-line";
+    row.innerHTML=`<select class="input line-product">${productOptions(selectedId)}</select><input class="input line-qty" type="number" min="1" value="1"><input class="input line-price" type="number" min="0" step=".01" value="0"><span class="line-sub">${money(0)}</span><button class="icon-btn remove-line" type="button">×</button>`;
+    $("#saleLines").appendChild(row);
+    const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");
+    const updatePrice=()=>{const p=state.products.find(p=>p.id===sel.value);price.value=p?.price||0;updateTotal()};
+    sel.onchange=updatePrice;row.oninput=updateTotal;row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};
+    if(selectedId) updatePrice(); else updateTotal();
+  };
+  const refreshLineOptions=()=>{$$(".line-product").forEach(sel=>{const current=sel.value;sel.innerHTML=productOptions(current);});};
+  const updateTotal=()=>{
+    const rows=$$(".product-line");
+    const items=rows.map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0})).filter(x=>x.productId&&x.qty>0);
+    rows.forEach(r=>{const q=+r.querySelector('.line-qty').value||0,p=state.products.find(x=>x.id===r.querySelector('.line-product').value);r.querySelector('.line-sub').textContent=money(q*(+r.querySelector('.line-price').value||0));});
+    const subtotal=items.reduce((s,x)=>s+x.qty*x.price,0),discount=+$("#sDiscount").value||0,delivery=+$("#sDelivery").value||0,labor=+$("#sLabor").value||0,base=Math.max(0,subtotal-discount+delivery+labor),tax=taxBreakdown(base,state.settings.taxCategories).reduce((s,x)=>s+x.amount,0);
+    $("#saleTotal").textContent=money(base+tax);
+    const warnings=stockAvailabilityWarnings(items);
+    const box=$("#stockWarning");
+    if(warnings.length){box.classList.remove("hidden");box.innerHTML=`<strong>Stock alert</strong><br>${warnings.map(esc).join("<br>")}`}else{box.classList.add("hidden");box.innerHTML=""}
+  };
+  $("#addLine").onclick=()=>addLine();
+  $("#quickAddStock").onclick=()=>openQuickProduct((newId)=>{refreshLineOptions();addLine(newId);});
+  $("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;
+  addLine();
+
   $("#saveSaleBtn").onclick=()=>{
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);if(!c)return toast("Select or add a customer before saving the quotation.");
-    const items=$$('.product-line').map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value,price:+r.querySelector('.line-price').value})).filter(x=>x.qty>0);if(!items.length)return toast("Add at least one item.");
+    const items=$$(".product-line").map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0})).filter(x=>x.productId&&x.qty>0);
+    if(!items.length)return toast("Add at least one item and select each item.");
+    const warnings=stockAvailabilityWarnings(items);
+    if(warnings.length && !confirm(`Stock alert:\n\n${warnings.join("\n")}\n\nSave this quotation anyway?`)) return;
     const doc={id:uid("estimate"),number:nextDocumentNumber("estimate"),date:$("#sDate").value,items,discount:+$("#sDiscount").value||0,deliveryCharge:+$("#sDelivery").value||0,laborCharge:+$("#sLabor").value||0,paid:0,status:"Quotation",delivered:false,stockDeducted:false,note:$("#sNote").value.trim(),...customerSnapshot(c)};recalcDocument(doc);
-    mutate(()=>state.estimates.push(doc));closeModal();printDocument(doc.id);
+    mutate(()=>state.estimates.push(doc));closeModal();toast(`${doc.number} saved.`);
   };
+}
+function openQuickProduct(onSaved){
+  const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Item to Stock</h3><button class="close" id="closeQuickProduct">×</button></div><div class="form-grid"><label>Product name<input id="qpName" class="input" placeholder="e.g. Solar Panel 550W"></label><label>Category<input id="qpCat" class="input" value="Solar / Electrical"></label><label>Opening quantity<input id="qpQty" type="number" min="0" class="input" value="0"></label><label>Minimum stock<input id="qpMin" type="number" min="0" class="input" value="2"></label><label>Cost price<input id="qpCost" type="number" min="0" step=".01" class="input" value="0"></label><label>Selling price<input id="qpPrice" type="number" min="0" step=".01" class="input" value="0"></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickProduct">Cancel</button><button class="btn btn-primary" id="saveQuickProduct">Add Item</button></div></div>`;$("#modalCard").appendChild(wrap);
+  const close=()=>wrap.remove();$("#closeQuickProduct").onclick=close;$("#cancelQuickProduct").onclick=close;
+  $("#saveQuickProduct").onclick=()=>{const name=$("#qpName").value.trim(),category=$("#qpCat").value.trim();if(!name||!category)return toast("Product name and category are required.");const obj={id:uid("prod"),name,sku:makeSku(category,name),category,qty:+$("#qpQty").value||0,minQty:+$("#qpMin").value||0,cost:+$("#qpCost").value||0,price:+$("#qpPrice").value||0};mutate(()=>state.products.push(obj));close();onSaved&&onSaved(obj.id);};
 }
 function deductDocumentStock(doc){
   if(doc.stockDeducted)return;
@@ -437,11 +477,35 @@ function recordPayment(id){
 }
 function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}? Stock will be deducted.`))return;try{mutate(()=>{inv.delivered=true;deductDocumentStock(inv);inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered";});}catch(e){toast(e.message)}}
 function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),paid:kind==="invoice"?paid:0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Part-paid"):"Unpaid"):"Proforma",delivered:false,stockDeducted:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number};recalcDocument(inv);return inv}
-function convertToProforma(id){const source=state.estimates.find(x=>x.id===id);if(!source)return;if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");const pro=copyForConversion(source,"proforma");mutate(()=>state.proformas.push(pro));toast(`${pro.number} created from ${source.number}.`);printDocument(pro.id)}
+function convertToProforma(id){
+  const source=state.estimates.find(x=>x.id===id);if(!source)return;
+  if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");
+  const pro=copyForConversion(source,"proforma");
+  const warnings=stockAvailabilityWarnings(pro.items);
+  if(warnings.length && !confirm(`Stock alert:\n\n${warnings.join("\n")}\n\nConvert this quotation to a proforma invoice anyway?`)) return;
+  mutate(()=>{state.proformas.push(pro);state.estimates=state.estimates.filter(x=>x.id!==source.id)});
+  closeModal();toast(`${source.number} converted to ${pro.number}. The quotation was removed.`);
+}
 function convertToInvoice(id){
-  const source=state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id);if(!source)return;if(!source.customerId)return toast("This document has no customer. Add a customer before converting.");
-  modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><p class="muted">Paid stock will be marked <strong>Reserved</strong> until delivery. It will not reduce physical stock yet.</p></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Create Invoice</button></div>`);
-  $("#convertBtn").onclick=()=>{const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));const inv={...copyForConversion(source,"invoice",paid),date:$("#convertDate").value};const warnings=stockAvailabilityWarnings(inv.items);if(warnings.length){toast("Not enough available stock: "+warnings.join(" "));return}try{mutate(()=>{state.invoices.push(inv);if(paid>0){inv.reserved=true;state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number})}});closeModal();printDocument(inv.id)}catch(e){toast(e.message)}};
+  const sourceType=state.estimates.some(x=>x.id===id)?"estimate":"proforma";
+  const source=sourceType==="estimate"?state.estimates.find(x=>x.id===id):state.proformas.find(x=>x.id===id);if(!source)return;
+  if(!source.customerId)return toast("This document has no customer. Add a customer before converting.");
+  modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><p class="muted">Payment reserves stock. Physical stock remains unchanged until delivery is confirmed.</p></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Save Invoice</button></div>`);
+  $("#convertBtn").onclick=()=>{
+    const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));
+    const inv={...copyForConversion(source,"invoice",paid),date:$("#convertDate").value};
+    const warnings=stockAvailabilityWarnings(inv.items);
+    if(warnings.length){toast("Not enough available stock: "+warnings.join(" "));return}
+    try{
+      mutate(()=>{
+        state.invoices.push(inv);
+        if(sourceType==="estimate") state.estimates=state.estimates.filter(x=>x.id!==source.id);
+        else state.proformas=state.proformas.filter(x=>x.id!==source.id);
+        if(paid>0){inv.reserved=true;state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number});}
+      });
+      closeModal();toast(`${source.number} converted to ${inv.number}. The previous document was removed.`);
+    }catch(e){toast(e.message)}
+  };
 }
 function openCash(){
   modal(`<div class="modal-head"><h3>Record Cash Transaction</h3><button class="close" data-close-modal>×</button></div>
@@ -471,7 +535,7 @@ function printDocument(id,receipt=false){
     <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p>${esc(i.number)} • ${esc(i.date)}</p></div>
     <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName||"Customer not specified")}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":"Document / Payment"}</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(reserved?"Reserved / Awaiting delivery":i.status)}<br>Paid: ${money(paid)}<br>Balance: ${money(balance)}`:`Document status: ${esc(i.status||"Draft")}`}</div></div>
     <table class="print-table"><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount</span><strong>${money(i.discount)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery charge</span><strong>${money(i.deliveryCharge)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge)}</strong></div>`:""}${taxes}<div class="grand"><span>Total</span><strong>${money(i.total)}</strong></div>${state.invoices.some(x=>x.id===id)?`<div><span>Amount paid</span><strong>${money(paid)}</strong></div><div><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div>
+    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount</span><strong>${money(i.discount)}</strong></div><div><span>Delivery charge</span><strong>${money(i.deliveryCharge||0)}</strong></div><div><span>Installation / labour</span><strong>${money(i.laborCharge||0)}</strong></div><div class="print-divider"></div>${taxes}<div class="grand"><span>TOTAL</span><strong>${money(i.total)}</strong></div>${state.invoices.some(x=>x.id===id)?`<div><span>Amount paid</span><strong>${money(paid)}</strong></div><div><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div>
     ${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}
     ${s.salesContract?`<div class="print-note"><strong>Sales contract / terms</strong><div>${esc(s.salesContract)}</div></div>`:""}
     ${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}
