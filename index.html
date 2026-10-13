@@ -50,6 +50,8 @@
         <button class="nav-item active" data-view="dashboard">⌂ <span>Dashboard</span></button>
         <button class="nav-item" data-view="stock">▣ <span>Stock</span></button>
         <button class="nav-item" data-view="sales">▤ <span>Sales & Invoices</span></button>
+        <button class="nav-item" data-view="purchases">▧ <span>Purchases</span></button>
+        <button class="nav-item" data-view="waybills">⇄ <span>Waybills</span></button>
         <button class="nav-item" data-view="cashflow">◫ <span>Cash Flow</span></button>
         <button class="nav-item" data-view="customers">♙ <span>Customers</span></button>
         <button class="nav-item" data-view="reports">▥ <span>Reports</span></button>
@@ -59,8 +61,8 @@
       <main class="content">
         <section id="dashboard" class="view active">
           <div class="page-head">
-            <div><h2>Dashboard</h2><p>Monitor stock, sales and cash flow at a glance.</p></div>
-            <div class="head-actions"><button class="btn btn-primary" data-open-sale>Create Quotation</button><button class="btn btn-outline" data-open-product>+ Add Stock</button></div>
+            <div><h2>Dashboard</h2><p>Monitor stock, sales, purchasing and cash flow at a glance.</p></div>
+            <div class="head-actions"><button class="btn btn-primary" data-open-sale>Create Quote / Estimate</button><button class="btn btn-outline" data-open-product>+ Add Stock</button></div>
           </div>
           <div class="cards four">
             <div class="metric"><span>Total stock value</span><strong id="mStock">GH₵ 0.00</strong><small id="mStockUnits">0 units</small></div>
@@ -85,9 +87,23 @@
         </section>
 
         <section id="sales" class="view">
-          <div class="page-head"><div><h2>Sales Documents</h2><p>New sales start as quotations. Convert to proforma invoices or invoices. Paid invoice stock is reserved; physical stock is deducted only when delivery is confirmed.</p></div><button class="btn btn-primary" data-open-sale>Create Quotation</button></div>
-          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotations</option><option value="Proforma Invoice">Proforma invoices</option><option value="Reserved / Awaiting delivery">Reserved / Awaiting delivery</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
+          <div class="page-head"><div><h2>Sales Documents</h2><p>Create polished quotations, estimates and invoices, then print or convert them into delivery waybills.</p></div><button class="btn btn-primary" data-open-sale>Create Quote / Estimate</button></div>
+          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotes / Estimates</option><option value="Proforma Invoice">Proforma invoices</option><option value="Reserved / Awaiting delivery">Reserved / Awaiting delivery</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
           <div class="table-wrap"><table><thead><tr><th>Document</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="salesTable"></tbody></table></div>
+        </section>
+
+        <section id="purchases" class="view">
+          <div class="page-head"><div><h2>Purchases & Suppliers</h2><p>Manage supplier records, purchase orders, supplier invoices and incoming stock.</p></div><div class="head-actions"><button class="btn btn-outline" data-open-supplier>+ Supplier</button><button class="btn btn-outline" data-open-purchase-order>+ Purchase Order</button><button class="btn btn-primary" data-open-purchase-invoice>+ Purchase Invoice</button></div></div>
+          <div class="cards three"><div class="metric"><span>Open purchase orders</span><strong id="mOpenPO">0</strong><small>Awaiting supply</small></div><div class="metric"><span>Purchase invoices</span><strong id="mPurchaseInvoices">0</strong><small id="mPurchaseBalance">0 outstanding</small></div><div class="metric"><span>Purchases this month</span><strong id="mPurchases">GH₵ 0.00</strong><small>Supplier invoices</small></div></div>
+          <div class="panel"><div class="panel-head"><h3>Purchase orders</h3><button class="link-btn" data-open-purchase-order>Create purchase order</button></div><div class="table-wrap"><table><thead><tr><th>Order</th><th>Date</th><th>Supplier</th><th>Total</th><th>Received</th><th>Status</th><th>Actions</th></tr></thead><tbody id="purchaseOrdersTable"></tbody></table></div></div>
+          <div class="panel"><div class="panel-head"><h3>Purchase invoices</h3><button class="link-btn" data-open-purchase-invoice>Record supplier invoice</button></div><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Total</th><th>Paid</th><th>Balance</th><th>Stock</th><th>Actions</th></tr></thead><tbody id="purchaseInvoicesTable"></tbody></table></div></div>
+          <div class="panel"><div class="panel-head"><h3>Suppliers</h3><button class="link-btn" data-open-supplier>Add supplier</button></div><div class="table-wrap"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Phone</th><th>Email</th><th>Purchase documents</th><th></th></tr></thead><tbody id="suppliersTable"></tbody></table></div></div>
+        </section>
+
+        <section id="waybills" class="view">
+          <div class="page-head"><div><h2>Waybills</h2><p>Prepare dispatch and goods-received notes from an invoice, purchase document or from scratch.</p></div><button class="btn btn-primary" data-open-waybill>+ Create Waybill</button></div>
+          <div class="toolbar"><input id="waybillSearch" class="input" placeholder="Search waybill, recipient or source…"><select id="waybillDirection" class="input"><option value="">All movements</option><option value="outgoing">Outgoing / dispatch</option><option value="incoming">Incoming / received</option></select></div>
+          <div class="table-wrap"><table><thead><tr><th>Waybill</th><th>Date</th><th>Movement</th><th>From / To</th><th>Source</th><th>Items</th><th>Status</th><th>Actions</th></tr></thead><tbody id="waybillsTable"></tbody></table></div>
         </section>
 
         <section id="cashflow" class="view">

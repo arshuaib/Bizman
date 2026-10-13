@@ -36,12 +36,16 @@ let driveReady = false;
 
 function defaultState(){
   return {
-    version: 2,
+    version: 3,
     products: [],
     customers: [],
     invoices: [],
     estimates: [],
     proformas: [],
+    suppliers: [],
+    purchaseOrders: [],
+    purchaseInvoices: [],
+    waybills: [],
     transactions: [],
     settings: {
       name:"EliteVolt Systems",
@@ -68,11 +72,16 @@ function mergeState(raw){
   const base=defaultState();
   return {
     ...base,...raw,
+    version:3,
     products:Array.isArray(raw?.products)?raw.products:[],
     customers:Array.isArray(raw?.customers)?raw.customers:[],
-    invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,stockDeducted:i.stockDeducted??false,paid:Number(i.paid||0),delivered:!!i.delivered,reserved:i.reserved??(Number(i.paid||0)>0&&!i.delivered)})):[],
-    estimates:Array.isArray(raw?.estimates)?raw.estimates:[],
-    proformas:Array.isArray(raw?.proformas)?raw.proformas:[],
+    invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("line")})):[],stockDeducted:i.stockDeducted??false,paid:Number(i.paid||0),delivered:!!i.delivered,reserved:i.reserved??(Number(i.paid||0)>0&&!i.delivered)})):[],
+    estimates:Array.isArray(raw?.estimates)?raw.estimates.map(i=>({...i,items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("line")})):[]})):[],
+    proformas:Array.isArray(raw?.proformas)?raw.proformas.map(i=>({...i,items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("line")})):[]})):[],
+    suppliers:Array.isArray(raw?.suppliers)?raw.suppliers:[],
+    purchaseOrders:Array.isArray(raw?.purchaseOrders)?raw.purchaseOrders.map(i=>({...i,items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("pline"),receivedQty:Number(x.receivedQty||0)})):[]})):[],
+    purchaseInvoices:Array.isArray(raw?.purchaseInvoices)?raw.purchaseInvoices.map(i=>({...i,items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("pline"),receivedQty:Number(x.receivedQty||0)})):[]})):[],
+    waybills:Array.isArray(raw?.waybills)?raw.waybills.map(w=>({...w,items:Array.isArray(w.items)?w.items.map(x=>({...x,handledQty:Number(x.handledQty||0)})):[]})):[],
     transactions:Array.isArray(raw?.transactions)?raw.transactions:[],
     settings:{...base.settings,...(raw?.settings||{})}
   };
@@ -174,7 +183,7 @@ function scheduleSave(){
 function mutate(fn){fn();renderAll();scheduleSave();}
 
 function renderAll(){
-  renderDashboard();renderStock();renderSales();renderCashflow();renderCustomers();renderReports();renderSettings();
+  renderDashboard();renderStock();renderSales();renderPurchases();renderWaybills();renderCashflow();renderCustomers();renderReports();renderSettings();
 }
 function switchView(view){
   $$(".nav-item").forEach(b=>b.classList.toggle("active",b.dataset.view===view));
@@ -211,7 +220,7 @@ function taxBreakdown(base, raw){
 function documentTaxBase(doc){return Math.max(0,Number(doc.subtotal||0)-Number(doc.discount||0)+Number(doc.deliveryCharge||0)+Number(doc.laborCharge||0))}
 function reservedQty(productId, excludeId=""){
   return state.invoices.filter(i=>i.id!==excludeId&&!i.delivered&&!i.stockDeducted&&Number(i.paid||0)>0)
-    .reduce((sum,i)=>sum+i.items.filter(x=>x.productId===productId).reduce((a,x)=>a+Number(x.qty||0),0),0);
+    .reduce((sum,i)=>sum+i.items.filter(x=>x.productId===productId).reduce((a,x)=>a+Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0)),0),0);
 }
 function availableQty(productId, excludeId=""){
   const p=state.products.find(x=>x.id===productId);return Math.max(0,Number(p?.qty||0)-reservedQty(productId,excludeId));
@@ -311,12 +320,12 @@ function renderSales(){
     const reserved=isInv&&!d.delivered&&!d.stockDeducted&&paid>0;
     let badge=d.status||"Draft"; if(reserved) badge="Reserved / Awaiting delivery";
     const cls=reserved?"part":badge==="Paid"||badge==="Delivered"?"paid":badge==="Part-paid"?"part":"unpaid";
-    let menu=`<button class="icon-btn" data-print-doc="${d.id}">Print</button><button class="icon-btn" data-copy-doc="${d.id}">Copy as quotation</button>`;
-    if(d.docType==="Estimate"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
-    } else if(d.docType==="Proforma Invoice"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
-    } else menu+=`<button class="icon-btn" data-payment="${d.id}">Payment</button><button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`;
+     let menu=`<button class="icon-btn" data-print-doc="${d.id}">Print</button><button class="icon-btn" data-copy-doc="${d.id}">Copy as quote</button>`;
+     if(d.docType==="Estimate"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+     } else if(d.docType==="Proforma Invoice"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+     } else menu+=`<button class="icon-btn" data-payment="${d.id}">Payment</button>${!d.delivered?`<button class="icon-btn" data-create-waybill="invoice:${d.id}">Create waybill</button>`:""}<button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button><button class="icon-btn" data-receipt="${d.id}">Receipt</button>`;
     menu+=`<button class="icon-btn danger-action" data-delete-doc="${d.docType}:${d.id}">Delete</button>`;
-    return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total)}</td><td>${isInv?money(paid):"—"}</td><td>${isInv?money(balance):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
+     return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${d.docType==="Estimate"?"Quote / Estimate":esc(d.docType)}</small></td><td>${esc(d.date)}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total)}</td><td>${isInv?money(paid):"—"}</td><td>${isInv?money(balance):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No documents found.</td></tr>`;
   $$('[data-print-doc]').forEach(b=>b.onclick=()=>printDocument(b.dataset.printDoc));
   $$('[data-copy-doc]').forEach(b=>b.onclick=()=>openCopyQuotation(b.dataset.copyDoc));
@@ -326,6 +335,7 @@ function renderSales(){
   $$('[data-delivery]').forEach(b=>b.onclick=()=>confirmDelivery(b.dataset.delivery));
   $$('[data-convert-pro]').forEach(b=>b.onclick=()=>convertToProforma(b.dataset.convertPro));
   $$('[data-convert-inv]').forEach(b=>b.onclick=()=>convertToInvoice(b.dataset.convertInv));
+  $$('[data-create-waybill]').forEach(b=>b.onclick=()=>{const [type,id]=b.dataset.createWaybill.split(":");openWaybill(type,id)});
   $$('.action-menu-toggle').forEach(b=>b.onclick=(e)=>{
     e.stopPropagation();
     const menu=b.closest('.action-menu');
@@ -368,6 +378,45 @@ function renderSales(){
   $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteDocument(type,id)}});
 }
 function $t(sel){return document.querySelector(sel)}
+
+function renderPurchases(){
+  const month=today().slice(0,7),monthInvoices=state.purchaseInvoices.filter(x=>String(x.date||"").startsWith(month));
+  const openOrders=state.purchaseOrders.filter(x=>x.status!=="Received"&&x.status!=="Cancelled");
+  const outstanding=state.purchaseInvoices.reduce((n,x)=>n+Math.max(0,Number(x.total||0)-Number(x.paid||0)),0);
+  $("#mOpenPO").textContent=openOrders.length;
+  $("#mPurchaseInvoices").textContent=state.purchaseInvoices.length;
+  $("#mPurchaseBalance").textContent=`${money(outstanding)} outstanding`;
+  $("#mPurchases").textContent=money(monthInvoices.reduce((n,x)=>n+Number(x.total||0),0));
+  $("#purchaseOrdersTable").innerHTML=state.purchaseOrders.length?state.purchaseOrders.slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(p=>{
+    const received=p.items.reduce((n,x)=>n+Number(x.receivedQty||0),0),qty=p.items.reduce((n,x)=>n+Number(x.qty||0),0),pending=received<qty;
+    const linkedInvoice=state.purchaseInvoices.some(x=>x.sourceOrderId===p.id);
+    return `<tr><td><strong>${esc(p.number)}</strong></td><td>${esc(p.date||"")}</td><td>${esc(p.supplierName||"Supplier")}</td><td>${money(p.total)}</td><td>${received} / ${qty}</td><td><span class="badge ${p.status==="Received"?"paid":p.status==="Partially received"?"part":"unpaid"}">${esc(p.status||"Ordered")}</span></td><td><div class="actions"><button class="icon-btn" data-print-purchase="order:${p.id}">Print</button>${pending?`<button class="icon-btn" data-create-waybill="purchaseOrder:${p.id}">Waybill</button>`:""}${!linkedInvoice?`<button class="icon-btn" data-convert-purchase="${p.id}">Create invoice</button>`:""}</div></td></tr>`;
+  }).join(""):`<tr><td colspan="7" class="empty">No purchase orders yet. Create one to plan your next supplier order.</td></tr>`;
+  $("#purchaseInvoicesTable").innerHTML=state.purchaseInvoices.length?state.purchaseInvoices.slice().sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(p=>{
+    const balance=Math.max(0,Number(p.total||0)-Number(p.paid||0)),received=p.items.reduce((n,x)=>n+Number(x.receivedQty||0),0),qty=p.items.reduce((n,x)=>n+Number(x.qty||0),0);
+    return `<tr><td><strong>${esc(p.number)}</strong><small class="table-sub">${esc(p.reference||"")}</small></td><td>${esc(p.date||"")}</td><td>${esc(p.supplierName||"Supplier")}</td><td>${money(p.total)}</td><td>${money(p.paid||0)}</td><td>${money(balance)}</td><td>${received} / ${qty}</td><td><div class="actions"><button class="icon-btn" data-print-purchase="invoice:${p.id}">Print</button>${received<qty?`<button class="icon-btn" data-create-waybill="purchaseInvoice:${p.id}">Waybill</button>`:""}${balance>0?`<button class="icon-btn" data-purchase-payment="${p.id}">Payment</button>`:""}${received<qty?`<button class="icon-btn" data-receive-purchase="${p.id}">Receive stock</button>`:""}</div></td></tr>`;
+  }).join(""):`<tr><td colspan="8" class="empty">Supplier invoices will appear here.</td></tr>`;
+  $("#suppliersTable").innerHTML=state.suppliers.length?state.suppliers.map(s=>`<tr><td><strong>${esc(s.name)}</strong></td><td>${esc(s.contactPerson||"—")}</td><td>${esc(s.phone||"—")}</td><td>${esc(s.email||"—")}</td><td>${state.purchaseOrders.filter(x=>x.supplierId===s.id).length+state.purchaseInvoices.filter(x=>x.supplierId===s.id).length}</td><td><div class="actions"><button class="icon-btn" data-edit-supplier="${s.id}">Edit</button><button class="icon-btn danger-action" data-delete-supplier="${s.id}">Delete</button></div></td></tr>`).join(""):`<tr><td colspan="6" class="empty">Add your first supplier to start creating purchase orders.</td></tr>`;
+  $$('[data-open-supplier]').forEach(b=>b.onclick=()=>openSupplier());
+  $$('[data-open-purchase-order]').forEach(b=>b.onclick=()=>openPurchase("order"));
+  $$('[data-open-purchase-invoice]').forEach(b=>b.onclick=()=>openPurchase("invoice"));
+  $$('[data-print-purchase]').forEach(b=>{const [kind,id]=b.dataset.printPurchase.split(":");b.onclick=()=>printPurchase(kind,id)});
+  $$('[data-convert-purchase]').forEach(b=>b.onclick=()=>openPurchase("invoice",b.dataset.convertPurchase));
+  $$('[data-create-waybill]').forEach(b=>b.onclick=()=>{const [type,id]=b.dataset.createWaybill.split(":");openWaybill(type,id)});
+  $$('[data-purchase-payment]').forEach(b=>b.onclick=()=>recordPurchasePayment(b.dataset.purchasePayment));
+  $$('[data-receive-purchase]').forEach(b=>b.onclick=()=>openReceivePurchase(b.dataset.receivePurchase));
+  $$('[data-edit-supplier]').forEach(b=>b.onclick=()=>openSupplier(b.dataset.editSupplier));
+  $$('[data-delete-supplier]').forEach(b=>b.onclick=()=>deleteSupplier(b.dataset.deleteSupplier));
+}
+
+function renderWaybills(){
+  const query=( $("#waybillSearch")?.value||"").toLowerCase(),direction=$("#waybillDirection")?.value||"";
+  const rows=state.waybills.filter(w=>`${w.number} ${w.partyName||""} ${w.sourceNumber||""}`.toLowerCase().includes(query)).filter(w=>!direction||w.direction===direction).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
+  $("#waybillsTable").innerHTML=rows.length?rows.map(w=>`<tr><td><strong>${esc(w.number)}</strong></td><td>${esc(w.date||"")}</td><td>${w.direction==="incoming"?"Incoming / received":"Outgoing / dispatch"}</td><td>${esc(w.partyName||"—")}</td><td>${esc(w.sourceNumber||"Standalone")}</td><td>${w.items.reduce((n,x)=>n+Number(x.qty||0),0)} units</td><td><span class="badge ${w.status==="Completed"?"paid":w.status==="Partially completed"?"part":"unpaid"}">${esc(w.status||"Prepared")}</span></td><td><div class="actions"><button class="icon-btn" data-print-waybill="${w.id}">Print</button>${w.status!=="Completed"?`<button class="icon-btn" data-complete-waybill="${w.id}">${w.direction==="incoming"?"Receive goods":"Mark delivered"}</button>`:""}</div></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No waybills yet. Create one from an invoice or purchase document.</td></tr>`;
+  $$('[data-open-waybill]').forEach(b=>b.onclick=()=>openWaybill());
+  $$('[data-print-waybill]').forEach(b=>b.onclick=()=>printWaybill(b.dataset.printWaybill));
+  $$('[data-complete-waybill]').forEach(b=>b.onclick=()=>completeWaybill(b.dataset.completeWaybill));
+}
 document.addEventListener('click',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
   x.classList.remove('open');
   const t=x.querySelector('.action-menu-toggle');if(t)t.setAttribute('aria-expanded','false');
@@ -475,9 +524,9 @@ function openAdjust(id){
 }
 function deleteProduct(id){
   const p=state.products.find(x=>x.id===id); if(!p)return;
-  const referenced=allDocuments().filter(d=>d.items?.some(x=>x.productId===id));
+  const referenced=[...allDocuments(),...state.purchaseOrders,...state.purchaseInvoices,...state.waybills].some(d=>d.items?.some(x=>x.productId===id));
   const reserved=reservedQty(id)>0;
-  if(referenced.length){toast("Delete protection: this item is already used in sales documents. Edit or archive it instead.");return}
+  if(referenced){toast("Delete protection: this item is used in a sales, purchase or waybill record. Edit or archive it instead.");return}
   if(reserved){toast("Delete protection: this item has reserved stock for a customer.");return}
   if(Number(p.qty||0)>0 && !confirm(`Delete ${p.name}? This will remove ${p.qty} unit(s) currently in stock. Continue?`))return;
   if(Number(p.qty||0)<=0 && !confirm(`Delete ${p.name}? This action cannot be undone.`))return;
@@ -501,27 +550,27 @@ function openSale(sourceId=null, copyMode=false){
   const sourceKind=source?(state.proformas.some(x=>x.id===source.id)?"proforma":"estimate"):"estimate";
   if(!state.products.length){toast("Add products before creating a quotation.");return}
   const taxLabels=parseTaxCategories(state.settings.taxCategories);
-  modal(`<div class="modal-head"><h3>${source && !copyMode ? "Edit " + esc(source.number) : "New Quotation"}</h3><button class="close" data-close-modal>×</button></div>
-  <p class="muted">Every new sale starts as a quotation. Stock is not reduced until delivery is confirmed. Paid invoices reserve stock until delivery.</p>
-  <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="estimate">Quotation</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${esc(source?.date||today())}"></label></div>
+  modal(`<div class="modal-head"><h3>${source && !copyMode ? "Edit " + esc(source.number) : "New Quote / Estimate"}</h3><button class="close" data-close-modal>×</button></div>
+  <p class="muted">Save this quote or estimate, then convert it to a proforma or sales invoice when approved. Stock changes only when delivery is confirmed.</p>
+  <div class="two-col"><label>Document type<select id="sDocType" class="input"><option value="estimate">Quote / Estimate</option></select></label><label>Date<input id="sDate" type="date" class="input" value="${esc(source?.date||today())}"></label></div>
   <div class="two-col" style="margin-top:12px"><div><label>Customer ${customerSelectHtml(source && !copyMode ? source.customerId : "")}</label></div><div><label>Customer details</label><div id="selectedCustomerInfo" class="selected-customer">Select a customer. Walk-in customers are not used for formal documents.</div></div></div>
   <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><div class="actions"><button class="btn btn-outline" id="quickAddStock">+ Add item to stock</button><button class="btn btn-outline" id="addLine">+ Add item</button></div></div><div id="saleLines" class="line-items"></div><div id="stockWarning" class="stock-warning hidden"></div></div>
   <div class="form-grid" style="margin-top:14px"><label>Discount amount<input id="sDiscount" type="number" min="0" step=".01" class="input" value="${source?.discount||0}"><small class="muted">Calculated: <span id="discountPct">0%</span> of subtotal</small></label><label>Delivery charge<input id="sDelivery" type="number" min="0" step=".01" class="input" value="${source?.deliveryCharge||0}"></label><label>Installation / labour charge<input id="sLabor" type="number" min="0" step=".01" class="input" value="${source?.laborCharge||0}"></label></div>
   <div class="panel" style="margin-top:14px"><label style="display:flex;gap:8px;align-items:center"><input id="sTaxEnabled" type="checkbox" ${(source?.taxEnabled!==false && state.settings.taxEnabled!==false)?"checked":""}> Apply configured taxes</label><div class="muted" id="taxSummary" style="margin-top:5px"></div></div>
   <label style="display:block;margin-top:12px">Document note<textarea id="sNote" class="input" rows="2">${esc(source?.note||state.settings.documentNotes||"")}</textarea></label>
   <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">${money(0)}</span></div>
-  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save Quotation</button></div>`);
+  <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save Quote / Estimate</button></div>`);
 
   function refreshCustomerInfo(){
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);
     $("#selectedCustomerInfo").innerHTML=c?`<strong>${esc(c.name)}</strong><br>${esc(c.phone||"")} ${c.email?`• ${esc(c.email)}`:""}<br>${esc(c.billingAddress||"")}${c.shippingAddress?`<br>Ship: ${esc(c.shippingAddress)}`:""}`:"<span class='muted'>Select a customer. Walk-in customers are not used for formal documents.</span>";
   }
-  $("#addCustomerInline").onclick=()=>openCustomer(null,id=>{ $("#sCustomer").value=id; refreshCustomerInfo(); });
+  $("#addCustomerInline").onclick=()=>openCustomerQuick(id=>{ $("#sCustomer").value=id; refreshCustomerInfo(); });
   $("#sCustomer").onchange=refreshCustomerInfo;
 
   const productOptions=(selected="")=>`<option value="">Select item…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}`;
-  const addLine=(selectedId="", qty=1, linePrice=0)=>{
-    const row=document.createElement("div");row.className="product-line";
+  const addLine=(selectedId="", qty=1, linePrice=0, lineId="")=>{
+    const row=document.createElement("div");row.className="product-line";row.dataset.lineId=lineId||uid("line");
     row.innerHTML=`<select class="input line-product">${productOptions(selectedId)}</select><input class="input line-qty" type="number" min="1" value="${qty}"><input class="input line-price" type="number" min="0" step=".01" value="${linePrice}"><span class="line-sub">${money(0)}</span><button class="icon-btn remove-line" type="button">×</button>`;
     $("#saleLines").appendChild(row);
     const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");
@@ -544,11 +593,11 @@ function openSale(sourceId=null, copyMode=false){
   $("#addLine").onclick=()=>addLine();
   $("#quickAddStock").onclick=()=>openQuickProduct((newId)=>{refreshLineOptions();addLine(newId);});
   $("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;$("#sTaxEnabled").onchange=updateTotal;
-  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price));}else addLine();
+  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price,x.lineId));}else addLine();
 
   $("#saveSaleBtn").onclick=()=>{
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);if(!c)return toast("Select or add a customer before saving the quotation.");
-    const items=$$(".product-line").map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0})).filter(x=>x.productId&&x.qty>0);
+    const items=$$(".product-line").map(r=>({lineId:r.dataset.lineId,productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,deliveredQty:Number((source?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.deliveredQty||0)})).filter(x=>x.productId&&x.qty>0);
     if(!items.length)return toast("Add at least one item and select each item.");
     const warnings=stockAvailabilityWarnings(items, source&&!copyMode?source.id:"");
     if(warnings.length && !confirm(`Stock alert:
@@ -577,15 +626,16 @@ function openQuickProduct(onSaved){
 }
 function deductDocumentStock(doc){
   if(doc.stockDeducted)return;
-  for(const x of doc.items){const p=state.products.find(p=>p.id===x.productId);if(!p||Number(p.qty)<Number(x.qty))throw new Error(`Insufficient physical stock for ${p?.name||"item"}.`)}
-  doc.items.forEach(x=>{const p=state.products.find(p=>p.id===x.productId);p.qty-=Number(x.qty)});doc.stockDeducted=true;doc.reserved=false;
+  const totals={};doc.items.forEach(x=>{totals[x.productId]=(totals[x.productId]||0)+Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))});
+  for(const [productId,remaining] of Object.entries(totals)){const p=state.products.find(p=>p.id===productId);if(!p||Number(p.qty)<remaining)throw new Error(`Insufficient physical stock for ${p?.name||"item"}.`)}
+  doc.items.forEach(x=>{const remaining=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0)),p=state.products.find(p=>p.id===x.productId);p.qty-=remaining;x.deliveredQty=Number(x.deliveredQty||0)+remaining});doc.stockDeducted=true;doc.delivered=true;doc.reserved=false;
 }
 function recordPayment(id){
   const inv=state.invoices.find(x=>x.id===id);if(!inv)return;const bal=Math.max(0,Number(inv.total)-Number(inv.paid));if(bal<=0)return toast("Invoice is already fully paid.");
   modal(`<div class="modal-head"><h3>Record Payment — ${esc(inv.number)}</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><label>Outstanding balance<input class="input" value="${money(bal)}" readonly></label><label>Payment amount<input id="payAmount" type="number" min="0" max="${bal}" step=".01" class="input" value="${bal}"></label><label>Date<input id="payDate" type="date" class="input" value="${today()}"></label></div><p class="muted">Payment reserves the ordered stock. Stock remains in physical inventory until delivery is confirmed.</p><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePayment">Save Payment</button></div>`);
   $("#savePayment").onclick=()=>{const amount=Math.min(bal,Math.max(0,+$("#payAmount").value||0));if(amount<=0)return toast("Enter a payment amount.");mutate(()=>{inv.paid=Number(inv.paid||0)+amount;inv.status=inv.paid>=inv.total?"Paid":"Part-paid";inv.reserved=!inv.delivered&&!inv.stockDeducted;state.transactions.push({id:uid("tx"),date:$("#payDate").value,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount,reference:inv.number})});closeModal()};
 }
-function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}? Stock will be deducted.`))return;try{mutate(()=>{inv.delivered=true;deductDocumentStock(inv);inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered";});}catch(e){toast(e.message)}}
+function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}? Stock will be deducted.`))return;try{mutate(()=>{deductDocumentStock(inv);inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered";});}catch(e){toast(e.message)}}
 function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),validUntil:kind==="proforma"?addDays(today(),Number(state.settings.documentValidityDays||7)):undefined,paid:kind==="invoice"?paid:0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Part-paid"):"Unpaid"):"Proforma",delivered:false,stockDeducted:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number,taxEnabled:source.taxEnabled!==false};recalcDocument(inv);return inv}
 function convertToProforma(id){
   const source=state.estimates.find(x=>x.id===id);if(!source)return;
@@ -622,6 +672,165 @@ function openCopyQuotation(id){
   openSale(source.id,true);
 }
 
+function nextOperationalNumber(kind){
+  const config={
+    estimate:{code:"EST",list:state.estimates},proforma:{code:"PRO",list:state.proformas},invoice:{code:"INV",list:state.invoices},
+    purchaseOrder:{code:"PO",list:state.purchaseOrders},purchaseInvoice:{code:"PIN",list:state.purchaseInvoices},waybill:{code:"WB",list:state.waybills}
+  }[kind];
+  if(!config)return nextDocumentNumber(kind);
+  const prefix=state.settings.prefix||"EVS",year=new Date().getFullYear(),key=`${prefix}-${config.code}-${year}-`;
+  const nums=config.list.map(d=>d.number).filter(n=>n?.startsWith(key)).map(n=>+(n.split("-").pop())||0);
+  return `${key}${String(Math.max(0,...nums)+1).padStart(4,"0")}`;
+}
+function supplierSnapshot(s){return {supplierId:s?.id||"",supplierName:s?.name||"",supplierContactPerson:s?.contactPerson||"",supplierPhone:s?.phone||"",supplierEmail:s?.email||"",supplierAddress:s?.address||"",supplierTaxId:s?.taxId||""}}
+function openSupplier(id=null,onSaved=null){
+  const s=id?state.suppliers.find(x=>x.id===id):null;
+  modal(`<div class="modal-head"><h3>${s?"Edit":"Add"} Supplier</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Supplier / Company name<input id="supName" class="input" value="${esc(s?.name||"")}" placeholder="Required"></label><label>Contact person<input id="supContact" class="input" value="${esc(s?.contactPerson||"")}"></label><label>Phone<input id="supPhone" class="input" value="${esc(s?.phone||"")}"></label><label>Email<input id="supEmail" class="input" value="${esc(s?.email||"")}"></label><label>Address<textarea id="supAddress" class="input" rows="3">${esc(s?.address||"")}</textarea></label><label>Tax / registration ID<input id="supTax" class="input" value="${esc(s?.taxId||"")}"></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSupplier">Save supplier</button></div>`);
+  $("#saveSupplier").onclick=()=>{const obj={id:s?.id||uid("supplier"),name:$("#supName").value.trim(),contactPerson:$("#supContact").value.trim(),phone:$("#supPhone").value.trim(),email:$("#supEmail").value.trim(),address:$("#supAddress").value.trim(),taxId:$("#supTax").value.trim()};if(!obj.name)return toast("Supplier name is required.");mutate(()=>{if(s)Object.assign(s,obj);else state.suppliers.push(obj)});closeModal();if(onSaved)onSaved(obj.id)};
+}
+function openSupplierQuick(onSaved){
+  const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Supplier</h3><button class="close" id="closeQuickSupplier">×</button></div><div class="form-grid"><label>Supplier / Company name<input id="qsName" class="input" placeholder="Required"></label><label>Contact person<input id="qsContact" class="input"></label><label>Phone<input id="qsPhone" class="input"></label><label>Email<input id="qsEmail" class="input"></label><label>Address<textarea id="qsAddress" class="input" rows="2"></textarea></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickSupplier">Cancel</button><button class="btn btn-primary" id="saveQuickSupplier">Save supplier</button></div></div>`;$("#modalCard").appendChild(wrap);
+  const close=()=>wrap.remove();$("#closeQuickSupplier").onclick=close;$("#cancelQuickSupplier").onclick=close;
+  $("#saveQuickSupplier").onclick=()=>{const item={id:uid("supplier"),name:$("#qsName").value.trim(),contactPerson:$("#qsContact").value.trim(),phone:$("#qsPhone").value.trim(),email:$("#qsEmail").value.trim(),address:$("#qsAddress").value.trim()};if(!item.name)return toast("Supplier name is required.");mutate(()=>state.suppliers.push(item));const select=$("#pSupplier");if(select){select.insertAdjacentHTML("beforeend",`<option value="${item.id}">${esc(item.name)}</option>`);select.value=item.id}close();onSaved&&onSaved(item.id)};
+}
+function deleteSupplier(id){
+  const supplier=state.suppliers.find(s=>s.id===id);if(!supplier)return;
+  if(state.purchaseOrders.some(x=>x.supplierId===id)||state.purchaseInvoices.some(x=>x.supplierId===id))return toast("This supplier is linked to purchase documents. Keep the supplier record for history.");
+  if(confirm(`Delete supplier ${supplier.name}?`))mutate(()=>state.suppliers=state.suppliers.filter(s=>s.id!==id));
+}
+function purchaseSupplierOptions(selected=""){return `<select id="pSupplier" class="input"><option value="">Select supplier…</option>${state.suppliers.map(s=>`<option value="${s.id}" ${s.id===selected?"selected":""}>${esc(s.name)}</option>`).join("")}</select><button class="btn btn-outline" type="button" id="addSupplierInline">+ Add supplier</button>`}
+function openPurchase(kind="order",sourceOrderId=null){
+  const isInvoice=kind==="invoice",sourceOrder=sourceOrderId?state.purchaseOrders.find(x=>x.id===sourceOrderId):null;
+  const orderOptions=`<option value="">No linked purchase order</option>${state.purchaseOrders.filter(o=>!state.purchaseInvoices.some(p=>p.sourceOrderId===o.id)||o.id===sourceOrderId).map(o=>`<option value="${o.id}" ${o.id===sourceOrderId?"selected":""}>${esc(o.number)} — ${esc(o.supplierName||"Supplier")}</option>`).join("")}`;
+  modal(`<div class="modal-head"><div><h3>New ${isInvoice?"Purchase Invoice":"Purchase Order"}</h3><small class="muted">${isInvoice?"Record a supplier bill; receive stock when goods arrive.":"Plan and print an order for your supplier."}</small></div><button class="close" data-close-modal>×</button></div>
+    <div class="two-col"><div><label for="pSupplier">Supplier</label><div class="supplier-select">${purchaseSupplierOptions(sourceOrder?.supplierId||"")}</div></div><label>${isInvoice?"Supplier invoice number":"Order date"}<input id="pReference" class="input" value="" placeholder="${isInvoice?"Optional supplier reference":"Internal note (optional)"}"></label></div>
+    ${isInvoice?`<div class="two-col" style="margin-top:12px"><label>Based on purchase order<select id="pSourceOrder" class="input">${orderOptions}</select></label><label>Invoice date<input id="pDate" type="date" class="input" value="${today()}"></label></div><div style="margin-top:12px"><label>Payment due date<input id="pDueDate" type="date" class="input" value="${addDays(today(),30)}"></label></div>`:`<div class="two-col" style="margin-top:12px"><label>Expected date<input id="pDate" type="date" class="input" value="${today()}"></label><label>Delivery / receiving instructions<input id="pInstructions" class="input" placeholder="Optional"></label></div>`}
+    <div class="panel-head" style="margin-top:16px"><h3>Items</h3><div class="actions"><button class="btn btn-outline" id="pAddProduct">+ New product</button><button class="btn btn-outline" id="pAddLine">+ Add item</button></div></div><div id="purchaseLines" class="purchase-lines"></div>
+    <div class="form-grid" style="margin-top:14px"><label>Discount<input id="pDiscount" type="number" min="0" step=".01" class="input" value="${sourceOrder?.discount||0}"></label><label>Other charges<input id="pCharges" type="number" min="0" step=".01" class="input" value="${sourceOrder?.otherCharges||0}"></label><label>Supplier tax / duty<input id="pTax" type="number" min="0" step=".01" class="input" value="${sourceOrder?.tax||0}"></label></div>
+    <label class="block-label" style="display:block;margin-top:12px">Notes<textarea id="pNote" class="input" rows="2">${esc(sourceOrder?.note||"")}</textarea></label><div class="purchase-total">Document total <strong id="purchaseTotal">${money(0)}</strong></div>
+    <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePurchase">Save ${isInvoice?"Purchase Invoice":"Purchase Order"}</button></div>`);
+  const lineList=$("#purchaseLines");let selectedOrder=sourceOrder;
+  const productOpts=(selected="")=>`<option value="">Select product…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} · ${esc(p.sku||"")}</option>`).join("")}`;
+  const addLine=(item={})=>{
+    const row=document.createElement("div");row.className="purchase-line";row.dataset.lineId=item.lineId||uid("pline");
+    const defaultCost=item.cost??item.price??(state.products.find(p=>p.id===item.productId)?.cost||0);
+    row.innerHTML=`<select class="input p-line-product">${productOpts(item.productId||"")}</select><input class="input p-line-qty" type="number" min="1" step="1" value="${Number(item.qty||1)}" aria-label="Quantity"><input class="input p-line-cost" type="number" min="0" step=".01" value="${Number(defaultCost)}" aria-label="Unit cost"><strong class="p-line-total">${money(0)}</strong><button type="button" class="icon-btn remove-purchase-line">×</button>`;
+    lineList.append(row);row.oninput=updateTotal;row.querySelector(".p-line-product").onchange=()=>{const p=state.products.find(x=>x.id===row.querySelector(".p-line-product").value);if(!item.cost&&!item.price)row.querySelector(".p-line-cost").value=p?.cost||0;updateTotal()};row.querySelector(".remove-purchase-line").onclick=()=>{row.remove();updateTotal()};updateTotal();
+  };
+  function updateTotal(){const subtotal=[...lineList.querySelectorAll(".purchase-line")].reduce((n,r)=>{const x=(+r.querySelector(".p-line-qty").value||0)*(+r.querySelector(".p-line-cost").value||0);r.querySelector(".p-line-total").textContent=money(x);return n+x},0);const disc=Math.min(subtotal,+$("#pDiscount").value||0);$("#purchaseTotal").textContent=money(Math.max(0,subtotal-disc)+(+$("#pCharges").value||0)+(+$("#pTax").value||0));}
+  $("#pAddLine").onclick=()=>addLine();["pDiscount","pCharges","pTax"].forEach(id=>$("#"+id).oninput=updateTotal);
+  $("#pAddProduct").onclick=()=>openQuickProduct(newId=>{lineList.querySelectorAll(".p-line-product").forEach(sel=>{const current=sel.value;sel.innerHTML=productOpts(current)});addLine({productId:newId})});
+  $("#addSupplierInline").onclick=()=>openSupplierQuick(id=>$("#pSupplier").value=id);
+  if(sourceOrder){sourceOrder.items.forEach(item=>addLine(item));}else addLine();
+  if(isInvoice&&$("#pSupplier"))$("#pSupplier").disabled=!!sourceOrder;
+  if(isInvoice&&$("#pSourceOrder"))$("#pSourceOrder").onchange=()=>{const order=state.purchaseOrders.find(x=>x.id===$("#pSourceOrder").value);selectedOrder=order||null;$("#pSupplier").disabled=!!order;if(!order){lineList.innerHTML="";addLine();$("#pDiscount").value=0;$("#pCharges").value=0;$("#pTax").value=0;$("#pNote").value="";updateTotal();return}$("#pSupplier").value=order.supplierId||"";lineList.innerHTML="";order.items.forEach(item=>addLine({...item,cost:item.cost??item.price}));$("#pDiscount").value=order.discount||0;$("#pCharges").value=order.otherCharges||0;$("#pTax").value=order.tax||0;$("#pNote").value=order.note||"";updateTotal();};
+  $("#savePurchase").onclick=()=>{
+    const supplier=state.suppliers.find(x=>x.id===$("#pSupplier").value);if(!supplier)return toast("Select or add a supplier.");
+    const items=[...lineList.querySelectorAll(".purchase-line")].map(r=>({lineId:r.dataset.lineId,productId:r.querySelector(".p-line-product").value,qty:+r.querySelector(".p-line-qty").value||0,cost:+r.querySelector(".p-line-cost").value||0,receivedQty:Number((selectedOrder?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.receivedQty||0)})).filter(x=>x.productId&&x.qty>0);
+    if(!items.length)return toast("Add at least one item.");
+    const subtotal=items.reduce((n,x)=>n+x.qty*x.cost,0),discount=Math.min(subtotal,+$("#pDiscount").value||0),charges=+$("#pCharges").value||0,tax=+$("#pTax").value||0;
+    const doc={id:uid(isInvoice?"purchase_invoice":"purchase_order"),number:nextOperationalNumber(isInvoice?"purchaseInvoice":"purchaseOrder"),date:$("#pDate").value||today(),dueDate:isInvoice?$("#pDueDate").value:"",reference:$("#pReference").value.trim(),items,subtotal,discount,otherCharges:charges,tax,total:Math.max(0,subtotal-discount)+charges+tax,note:$("#pNote").value.trim(),...supplierSnapshot(supplier)};
+    if(isInvoice){doc.paid=0;doc.status="Unpaid";doc.sourceOrderId=$("#pSourceOrder")?.value||"";doc.received=items.every(x=>Number(x.receivedQty||0)>=x.qty);doc.receiptStatus=doc.received?"Received":items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Awaiting goods";mutate(()=>{state.purchaseInvoices.push(doc);const order=state.purchaseOrders.find(x=>x.id===doc.sourceOrderId);if(order){order.status=order.items.every(x=>Number(x.receivedQty||0)>=x.qty)?"Received":order.items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Invoiced";}});}
+    else{doc.status="Ordered";doc.instructions=$("#pInstructions").value.trim();doc.items=items.map(x=>({...x,receivedQty:0}));mutate(()=>state.purchaseOrders.push(doc));}
+    closeModal();toast(`${doc.number} saved.`);
+  };
+}
+function recordPurchasePayment(id){
+  const p=state.purchaseInvoices.find(x=>x.id===id);if(!p)return;const balance=Math.max(0,Number(p.total||0)-Number(p.paid||0));if(!balance)return toast("This purchase invoice is fully paid.");
+  modal(`<div class="modal-head"><h3>Pay supplier invoice ${esc(p.number)}</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><label>Outstanding balance<input class="input" value="${money(balance)}" readonly></label><label>Payment amount<input id="purchasePayAmount" class="input" type="number" min="0" max="${balance}" step=".01" value="${balance}"></label><label>Payment date<input id="purchasePayDate" class="input" type="date" value="${today()}"></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="savePurchasePayment">Record payment</button></div>`);
+  $("#savePurchasePayment").onclick=()=>{const amount=Math.min(balance,Math.max(0,+$("#purchasePayAmount").value||0));if(!amount)return toast("Enter a payment amount.");mutate(()=>{p.paid=Number(p.paid||0)+amount;p.status=p.paid>=p.total?"Paid":"Part-paid";state.transactions.push({id:uid("tx"),date:$("#purchasePayDate").value,type:"out",category:"Purchase",description:`Payment for ${p.number} — ${p.supplierName}`,amount,reference:p.number})});closeModal()};
+}
+function applyPurchaseReceipt(doc,item,qty){
+  const product=state.products.find(p=>p.id===item.productId);if(!product)throw new Error("A product on this receipt no longer exists.");
+  const oldQty=Number(product.qty||0),oldCost=Number(product.cost||0),cost=Number(item.cost||0),added=Number(qty||0);
+  product.cost=oldQty+added?((oldQty*oldCost)+(added*cost))/(oldQty+added):cost;product.qty=oldQty+added;
+  item.receivedQty=Number(item.receivedQty||0)+added;
+  const order=doc.sourceOrderId?state.purchaseOrders.find(x=>x.id===doc.sourceOrderId):state.purchaseOrders.find(x=>x.items.some(i=>i.lineId===item.lineId));
+  const partner=order||state.purchaseInvoices.find(x=>x.sourceOrderId===doc.id);
+  const paired=partner&&partner!==doc?partner.items.find(x=>x.lineId===item.lineId):null;
+  if(paired)paired.receivedQty=Number(paired.receivedQty||0)+added;
+}
+function syncPurchaseStatuses(doc){
+  const fullyReceived=doc.items.every(x=>Number(x.receivedQty||0)>=Number(x.qty||0));doc.received=fullyReceived;doc.receiptStatus=fullyReceived?"Received":doc.items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Awaiting goods";
+  if(state.purchaseOrders.some(x=>x.id===doc.id))doc.status=fullyReceived?"Received":doc.items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Ordered";
+  if(doc.sourceOrderId){const order=state.purchaseOrders.find(x=>x.id===doc.sourceOrderId);if(order){const complete=order.items.every(x=>Number(x.receivedQty||0)>=Number(x.qty||0));order.status=complete?"Received":order.items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Invoiced";}}
+}
+function openReceivePurchase(id){
+  const doc=state.purchaseInvoices.find(x=>x.id===id);if(!doc)return;const pending=doc.items.reduce((n,x)=>n+Math.max(0,x.qty-Number(x.receivedQty||0)),0);if(!pending)return toast("All items on this purchase invoice have been received.");
+  modal(`<div class="modal-head"><h3>Receive goods · ${esc(doc.number)}</h3><button class="close" data-close-modal>×</button></div><p class="muted">Enter quantities received. Inventory is updated and unit cost is included in weighted average stock cost.</p><div class="receive-list">${doc.items.map(x=>{const p=state.products.find(y=>y.id===x.productId);const remain=Math.max(0,x.qty-Number(x.receivedQty||0));return `<label class="receive-row"><span><strong>${esc(p?.name||"Product")}</strong><small>${Number(x.receivedQty||0)} of ${x.qty} received · ${remain} remaining</small></span><input class="input receive-qty" data-line-id="${esc(x.lineId)}" type="number" min="0" max="${remain}" value="${remain}" aria-label="Quantity received"></label>`}).join("")}</div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="confirmPurchaseReceipt">Update stock</button></div>`);
+  $("#confirmPurchaseReceipt").onclick=()=>{const entries=$$(".receive-qty").map(el=>({lineId:el.dataset.lineId,qty:Math.min(+el.max,+el.value||0)})).filter(x=>x.qty>0);if(!entries.length)return toast("Enter a quantity received.");mutate(()=>{entries.forEach(x=>{const item=doc.items.find(y=>y.lineId===x.lineId);applyPurchaseReceipt(doc,item,x.qty)});syncPurchaseStatuses(doc)});closeModal();toast("Received quantities added to stock.")};
+}
+
+function waybillSources(){return [
+  ...state.invoices.map(x=>({kind:"invoice",doc:x,label:`Sales invoice ${x.number} · ${x.customerName}`})),
+  ...state.purchaseInvoices.map(x=>({kind:"purchaseInvoice",doc:x,label:`Purchase invoice ${x.number} · ${x.supplierName}`})),
+  ...state.purchaseOrders.map(x=>({kind:"purchaseOrder",doc:x,label:`Purchase order ${x.number} · ${x.supplierName}`}))
+]}
+function openWaybill(sourceType=null,sourceId=null){
+  const sources=waybillSources(),preselected=sourceType&&sourceId?`${sourceType}:${sourceId}`:"";
+  modal(`<div class="modal-head"><div><h3>Create Waybill</h3><small class="muted">Print a dispatch note or goods-received record. Stock updates when the waybill is completed.</small></div><button class="close" data-close-modal>×</button></div>
+    <div class="two-col"><label>Based on document<select id="wSource" class="input"><option value="">Standalone waybill</option>${sources.map(x=>`<option value="${x.kind}:${x.doc.id}" ${preselected===`${x.kind}:${x.doc.id}`?"selected":""}>${esc(x.label)}</option>`).join("")}</select></label><label>Movement<select id="wDirection" class="input"><option value="outgoing">Outgoing / dispatch</option><option value="incoming">Incoming / received</option></select></label></div>
+    <div class="two-col" style="margin-top:12px"><label>From / To<input id="wParty" class="input" placeholder="Customer or supplier"></label><label>Waybill date<input id="wDate" type="date" class="input" value="${today()}"></label><label>Carrier / driver<input id="wCarrier" class="input"></label><label>Vehicle / tracking reference<input id="wReference" class="input"></label></div>
+    <div class="panel-head" style="margin-top:16px"><h3>Goods</h3><div class="actions"><button class="btn btn-outline" id="wAddProduct">+ New product</button><button class="btn btn-outline" id="wAddLine">+ Add item</button></div></div><div id="waybillLines" class="purchase-lines"></div>
+    <label class="block-label" style="display:block;margin-top:12px">Delivery / handling notes<textarea id="wNote" class="input" rows="2"></textarea></label><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveWaybill">Save waybill</button></div>`);
+  const lineList=$("#waybillLines");
+  const productOpts=(selected="")=>`<option value="">Select product…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} · ${esc(p.sku||"")}</option>`).join("")}`;
+  const addLine=(item={})=>{const row=document.createElement("div");row.className="purchase-line waybill-line";row.dataset.sourceItemId=item.sourceItemId||item.lineId||"";row.innerHTML=`<select class="input w-line-product" ${row.dataset.sourceItemId?"disabled":""}>${productOpts(item.productId||"")}</select><input class="input w-line-qty" type="number" min="1" step="1" value="${Number(item.qty||1)}" aria-label="Waybill quantity"><span>${row.dataset.sourceItemId?"Linked":"Manual"}</span><button type="button" class="icon-btn remove-purchase-line">×</button>`;lineList.append(row);row.querySelector(".remove-purchase-line").onclick=()=>row.remove()};
+  const loadSource=()=>{const [kind,id]=($("#wSource").value||"").split(":");const source=sources.find(x=>x.kind===kind&&x.doc.id===id);if(!source)return;
+    const doc=source.doc, incoming=kind!=="invoice";$("#wDirection").value=incoming?"incoming":"outgoing";$("#wParty").value=incoming?(doc.supplierName||""):(doc.customerName||"");$("#wNote").value=`Against ${doc.number}`;lineList.innerHTML="";
+    doc.items.forEach(x=>{const pending=Math.max(0,Number(x.qty||0)-Number(incoming?x.receivedQty||0:x.deliveredQty||0));if(pending)addLine({productId:x.productId,qty:pending,sourceItemId:x.lineId});});
+    if(!lineList.children.length)toast("No outstanding quantities remain on this document.");
+    $("#wDirection").disabled=true;$("#wAddLine").disabled=true;$("#wAddProduct").disabled=true;
+  };
+  $("#wSource").onchange=()=>{if($("#wSource").value){loadSource();return}$("#wDirection").disabled=false;$("#wAddLine").disabled=false;$("#wAddProduct").disabled=false;lineList.innerHTML="";$("#wParty").value="";$("#wNote").value="";addLine()};$("#wAddLine").onclick=()=>addLine();
+  $("#wAddProduct").onclick=()=>openQuickProduct(newId=>{lineList.querySelectorAll(".w-line-product").forEach(sel=>{const current=sel.value;sel.innerHTML=productOpts(current)});addLine({productId:newId})});
+  if(preselected)loadSource();else addLine();
+  $("#saveWaybill").onclick=()=>{
+    const direction=$("#wDirection").value,party=$("#wParty").value.trim();if(!party)return toast("Enter the customer or supplier name.");
+    const items=[...lineList.querySelectorAll(".waybill-line")].map(r=>({productId:r.querySelector(".w-line-product").value,qty:+r.querySelector(".w-line-qty").value||0,handledQty:0,sourceItemId:r.dataset.sourceItemId||""})).filter(x=>x.productId&&x.qty>0);if(!items.length)return toast("Add at least one item to the waybill.");
+    const [kind,id]=($("#wSource").value||"").split(":"),source=sources.find(x=>x.kind===kind&&x.doc.id===id);
+    const wb={id:uid("waybill"),number:nextOperationalNumber("waybill"),date:$("#wDate").value||today(),direction,partyName:party,carrier:$("#wCarrier").value.trim(),reference:$("#wReference").value.trim(),note:$("#wNote").value.trim(),sourceType:source?.kind||"",sourceId:source?.doc.id||"",sourceNumber:source?.doc.number||"",items,status:"Prepared"};
+    mutate(()=>state.waybills.push(wb));closeModal();toast(`${wb.number} saved.`);
+  };
+}
+function completeWaybill(id){
+  const wb=state.waybills.find(x=>x.id===id);if(!wb||wb.status==="Completed")return;
+  const remaining=wb.items.reduce((n,x)=>n+Math.max(0,x.qty-Number(x.handledQty||0)),0);if(!remaining)return toast("All waybill quantities have been completed.");
+  modal(`<div class="modal-head"><h3>${wb.direction==="incoming"?"Receive goods":"Confirm dispatch"} · ${esc(wb.number)}</h3><button class="close" data-close-modal>×</button></div><div class="receive-list">${wb.items.map(x=>{const p=state.products.find(y=>y.id===x.productId),left=Math.max(0,x.qty-Number(x.handledQty||0));return `<label class="receive-row"><span><strong>${esc(p?.name||"Product")}</strong><small>${Number(x.handledQty||0)} of ${x.qty} completed · ${left} remaining</small></span><input class="input waybill-qty" data-index="${wb.items.indexOf(x)}" type="number" min="0" max="${left}" value="${left}" aria-label="Quantity completed"></label>`}).join("")}</div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveWaybillCompletion">Save quantities</button></div>`);
+  $("#saveWaybillCompletion").onclick=()=>{
+    const entries=$$(".waybill-qty").map(el=>({index:+el.dataset.index,qty:Math.min(+el.max,+el.value||0)})).filter(x=>x.qty>0);if(!entries.length)return toast("Enter at least one quantity.");
+    const source=wb.sourceType==="invoice"?state.invoices.find(x=>x.id===wb.sourceId):wb.sourceType==="purchaseInvoice"?state.purchaseInvoices.find(x=>x.id===wb.sourceId):wb.sourceType==="purchaseOrder"?state.purchaseOrders.find(x=>x.id===wb.sourceId):null;
+    const outgoingTotals={};
+    for(const {index,qty} of entries){const line=wb.items[index],product=state.products.find(p=>p.id===line.productId);if(!product)return toast("A waybill product no longer exists.");
+      const sourceLine=source?.items.find(x=>x.lineId===line.sourceItemId);
+      if(wb.direction==="incoming"&&sourceLine&&qty>Number(sourceLine.qty||0)-Number(sourceLine.receivedQty||0))return toast("Received quantity now exceeds the remaining supplier order quantity.");
+      if(wb.direction==="outgoing"&&sourceLine&&qty>Number(sourceLine.qty||0)-Number(sourceLine.deliveredQty||0))return toast("Dispatch quantity now exceeds the remaining invoice quantity.");
+      if(wb.direction==="outgoing")outgoingTotals[line.productId]=(outgoingTotals[line.productId]||0)+qty;
+    }
+    if(wb.direction==="outgoing")for(const [productId,qty] of Object.entries(outgoingTotals)){const available=availableQty(productId,wb.sourceType==="invoice"?wb.sourceId:"");if(qty>available){const product=state.products.find(p=>p.id===productId);return toast(`Only ${available} units of ${product?.name||"this product"} are available for dispatch.`)}}
+    try{mutate(()=>{
+      entries.forEach(({index,qty})=>{const line=wb.items[index],product=state.products.find(p=>p.id===line.productId),sourceLine=source?.items.find(x=>x.lineId===line.sourceItemId);
+        if(wb.direction==="incoming"){
+          if(sourceLine)applyPurchaseReceipt(source,sourceLine,qty);
+          else{const incoming={lineId:uid("receipt"),productId:line.productId,cost:Number(product.cost||0)};applyPurchaseReceipt({items:[]},incoming,qty)}
+        }else{
+          if(sourceLine)sourceLine.deliveredQty=Number(sourceLine.deliveredQty||0)+qty;
+          product.qty-=qty;
+        }
+        line.handledQty=Number(line.handledQty||0)+qty;
+      });
+      if(source&&wb.direction==="incoming"){
+        syncPurchaseStatuses(source);
+        if(wb.sourceType==="purchaseOrder")state.purchaseInvoices.filter(x=>x.sourceOrderId===source.id).forEach(syncPurchaseStatuses);
+      }
+      if(source&&wb.direction==="outgoing"){
+        const delivered=source.items.every(x=>Number(x.deliveredQty||0)>=Number(x.qty||0));source.delivered=delivered;source.stockDeducted=delivered;source.reserved=!delivered&&Number(source.paid||0)>0;source.status=delivered?(Number(source.paid||0)>=Number(source.total||0)?"Paid":"Delivered"):"Partially delivered";
+      }
+      wb.status=wb.items.every(x=>Number(x.handledQty||0)>=Number(x.qty||0))?"Completed":"Partially completed";
+    });closeModal();toast(wb.status==="Completed"?"Waybill completed; stock updated.":"Waybill quantities updated.");}catch(e){toast(e.message)}
+  };
+}
+
 function openCash(){
   modal(`<div class="modal-head"><h3>Record Cash Transaction</h3><button class="close" data-close-modal>×</button></div>
   <div class="form-stack"><label>Date<input id="tDate" type="date" class="input" value="${today()}"></label><label>Type<select id="tType" class="input"><option value="in">Cash in</option><option value="out">Cash out</option></select></label><label>Category<input id="tCat" class="input" placeholder="e.g. Purchase, Transport, Utilities"></label><label>Description<input id="tDesc" class="input"></label><label>Amount<input id="tAmount" type="number" min="0" step=".01" class="input"></label><label>Reference<input id="tRef" class="input"></label></div>
@@ -631,12 +840,18 @@ function openCash(){
 function deleteCash(id){
   const t=state.transactions.find(x=>x.id===id); if(!t)return;
   if(t.reference && state.invoices.some(i=>i.number===t.reference)){toast("Delete protection: this transaction is linked to an invoice. Manage it from the invoice payment history.");return}
+  if(t.reference && state.purchaseInvoices.some(i=>i.number===t.reference)){toast("Delete protection: this transaction is linked to a supplier invoice. Manage it from the purchase invoice.");return}
   if(confirm("Delete this cash transaction? This action cannot be undone."))mutate(()=>state.transactions=state.transactions.filter(x=>x.id!==id));
 }
 function openCustomer(id=null,onSaved=null){
   const c=id?state.customers.find(x=>x.id===id):null;
   modal(`<div class="modal-head"><h3>${c?"Edit":"Add"} Customer</h3><button class="close" data-close-modal>×</button></div><div class="form-grid"><label>Customer / Company name<input id="cName" class="input" value="${esc(c?.name||"")}" placeholder="Required"></label><label>Contact person<input id="cContact" class="input" value="${esc(c?.contactPerson||"")}"></label><label>Phone<input id="cPhone" class="input" value="${esc(c?.phone||"")}"></label><label>Email<input id="cEmail" class="input" value="${esc(c?.email||"")}"></label><label>Tax ID / VAT number<input id="cTaxId" class="input" value="${esc(c?.taxId||"")}"></label><label>Billing address<textarea id="cBilling" class="input" rows="3">${esc(c?.billingAddress||c?.address||"")}</textarea></label><label>Shipping address<textarea id="cShipping" class="input" rows="3">${esc(c?.shippingAddress||"")}</textarea></label><label>Customer notes<textarea id="cNotes" class="input" rows="3">${esc(c?.notes||"")}</textarea></label></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCustomerBtn">Save Customer</button></div>`);
   $("#saveCustomerBtn").onclick=()=>{const obj={id:c?.id||uid("cust"),name:$("#cName").value.trim(),contactPerson:$("#cContact").value.trim(),phone:$("#cPhone").value.trim(),email:$("#cEmail").value.trim(),taxId:$("#cTaxId").value.trim(),billingAddress:$("#cBilling").value.trim(),shippingAddress:$("#cShipping").value.trim(),address:$("#cBilling").value.trim(),notes:$("#cNotes").value.trim()};if(!obj.name)return toast("Customer name is required.");mutate(()=>{if(c)Object.assign(c,obj);else state.customers.push(obj)});closeModal();if(onSaved)onSaved(obj.id)};
+}
+function openCustomerQuick(onSaved){
+  const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Customer</h3><button class="close" id="closeQuickCustomer">×</button></div><div class="form-grid"><label>Customer / Company name<input id="qcName" class="input" placeholder="Required"></label><label>Contact person<input id="qcContact" class="input"></label><label>Phone<input id="qcPhone" class="input"></label><label>Email<input id="qcEmail" class="input"></label><label>Tax ID<input id="qcTax" class="input"></label><label>Billing address<textarea id="qcBilling" class="input" rows="2"></textarea></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickCustomer">Cancel</button><button class="btn btn-primary" id="saveQuickCustomer">Save customer</button></div></div>`;$("#modalCard").appendChild(wrap);
+  const close=()=>wrap.remove();$("#closeQuickCustomer").onclick=close;$("#cancelQuickCustomer").onclick=close;
+  $("#saveQuickCustomer").onclick=()=>{const item={id:uid("cust"),name:$("#qcName").value.trim(),contactPerson:$("#qcContact").value.trim(),phone:$("#qcPhone").value.trim(),email:$("#qcEmail").value.trim(),taxId:$("#qcTax").value.trim(),billingAddress:$("#qcBilling").value.trim(),shippingAddress:"",address:$("#qcBilling").value.trim(),notes:""};if(!item.name)return toast("Customer name is required.");mutate(()=>state.customers.push(item));const select=$("#sCustomer");if(select){select.insertAdjacentHTML("beforeend",`<option value="${item.id}">${esc(item.name)}</option>`);select.value=item.id}close();onSaved&&onSaved(item.id)};
 }
 function deleteCustomer(id){
   const c=state.customers.find(x=>x.id===id); if(!c)return;
@@ -648,6 +863,7 @@ function deleteDocument(type,id){
   const collection=type==="Invoice"?state.invoices:type==="Estimate"?state.estimates:state.proformas;
   const d=collection.find(x=>x.id===id); if(!d)return;
   if(type==="Invoice"){
+    if(state.waybills.some(w=>w.sourceType==="invoice"&&w.sourceId===d.id)){toast("Delete protection: this invoice is linked to a waybill. Keep it for delivery history.");return;}
     if(Number(d.paid||0)>0 || d.delivered || d.stockDeducted || d.reserved){
       toast("Delete protection: paid, reserved or delivered invoices cannot be deleted. Keep them for audit history.");return;
     }
@@ -677,27 +893,38 @@ async function waitForPrintAssets(){
 }
 async function printDocument(id,receipt=false){
   const i=findDocument(id);if(!i)return;const s=state.settings;
-  const type=state.invoices.some(x=>x.id===id)?"SALES INVOICE":state.estimates.some(x=>x.id===id)?"QUOTATION":"PROFORMA INVOICE";
-  const validUntil=i.validUntil || ((type!=="SALES INVOICE") ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
-  const rows=i.items.map(x=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td>${esc(p?.name||"Item")}</td><td>${esc(p?.sku||"")}</td><td>${x.qty}</td><td>${money(x.price)}</td><td>${money(x.qty*x.price)}</td></tr>`}).join("");
+  const isInvoice=state.invoices.some(x=>x.id===id),isEstimate=state.estimates.some(x=>x.id===id);
+  const type=isInvoice?"SALES INVOICE":isEstimate?"QUOTATION / ESTIMATE":"PROFORMA INVOICE";
+  const validUntil=i.validUntil || ((!isInvoice) ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
+  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.category||"")}</small></td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price)}</td><td class="num"><strong>${money(x.qty*x.price)}</strong></td></tr>`}).join("");
   const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
   const taxes=(i.taxEnabled===false||s.taxEnabled===false?[]:(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories))).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount)}</strong></div>`).join("");
   const paid=Number(i.paid||0),balance=Math.max(0,Number(i.total||0)-paid),reserved=!i.delivered&&!i.stockDeducted&&paid>0;
-  $("#printArea").innerHTML=`<div class="print-document ${receipt?"receipt-document":""}">
-    <div class="print-head"><img src="assets/elitevolt-logo.png"><div class="print-company"><h1>${esc(s.name)}</h1><p>${esc(s.address)}</p><p>${esc(s.phone)} ${s.email?`• ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg: ${esc(s.companyReg)}`:""} ${s.tax?`• Tax/VAT: ${esc(s.tax)}`:""}</p></div></div>
-    <div class="print-title"><h2>${receipt?"PAYMENT RECEIPT":type}</h2><p><strong>Document No.:</strong> ${esc(i.number)} &nbsp; • &nbsp; <strong>Created date:</strong> ${esc(i.date)}${validUntil?` &nbsp; • &nbsp; <strong>Valid until:</strong> ${esc(validUntil)}`:""}</p></div>
-    <div class="print-meta"><div class="print-box"><strong>Bill to</strong>${esc(i.customerName||"Customer not specified")}${i.customerContactPerson?`<br>${esc(i.customerContactPerson)}`:""}${customerAddress?`<br>${esc(customerAddress)}`:""}${i.customerPhone?`<br>${esc(i.customerPhone)}`:""}${i.customerEmail?`<br>${esc(i.customerEmail)}`:""}${i.customerTaxId?`<br>Tax ID: ${esc(i.customerTaxId)}`:""}</div><div class="print-box"><strong>${shipping?"Ship to / ":"Document / Payment"}</strong>${shipping?`${esc(shipping)}<br><br>`:""}${state.invoices.some(x=>x.id===id)?`Status: ${esc(reserved?"Reserved / Awaiting delivery":i.status)}<br>Paid: ${money(paid)}<br>Balance: ${money(balance)}`:`Document status: ${esc(i.status||"Draft")}`}</div></div>
-    <table class="print-table"><thead><tr><th>Description</th><th>SKU</th><th>Qty</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${rows}</tbody></table>
-    <div class="print-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount ${i.subtotal?`(${(Number(i.discount||0)/Number(i.subtotal||1)*100).toFixed(2)}%)`:"(0%)"}</span><strong>${money(i.discount)}</strong></div><div><span>Delivery charge</span><strong>${money(i.deliveryCharge||0)}</strong></div><div><span>Installation / labour</span><strong>${money(i.laborCharge||0)}</strong></div><div class="print-divider"></div>${taxes}<div class="grand"><span>TOTAL</span><strong>${money(i.total)}</strong></div>${state.invoices.some(x=>x.id===id)?`<div><span>Amount paid</span><strong>${money(paid)}</strong></div><div><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div>
-    ${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}
-    ${s.salesContract?`<div class="print-note"><strong>Sales contract / terms</strong><div>${esc(s.salesContract)}</div></div>`:""}
-    ${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}
-    ${s.bankDetails?`<div class="print-note"><strong>Bank / payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}
-    <div class="print-sign"><div>Prepared by</div><div>Customer acknowledgement</div></div>
-    <div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)}</span></div>
+  $("#printArea").innerHTML=`<div class="print-document modern-document ${receipt?"receipt-document":""}">
+    <div class="modern-print-head"><div class="modern-company"><img src="assets/elitevolt-logo.png"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · Tax ID ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(i.number)}</strong><small>Issued ${esc(i.date||"")}${validUntil?` · Valid to ${esc(validUntil)}`:""}</small></div></div>
+    <div class="modern-accent"></div>
+    <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>Tax ID: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(reserved?"Reserved for delivery":i.status||"Quotation")}</strong>`}${isInvoice?`<span>Amount paid: ${money(paid)}</span><span>Balance due: ${money(balance)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
+    <table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th>SKU</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6">No line items</td></tr>`}</tbody></table>
+    <div class="modern-summary"><div class="modern-terms">${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}${s.salesContract?`<div class="print-note"><strong>Sales terms</strong><div>${esc(s.salesContract)}</div></div>`:""}${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}${s.bankDetails?`<div class="print-note"><strong>Payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(i.subtotal)}</strong></div><div><span>Discount</span><strong>− ${money(i.discount)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery</span><strong>${money(i.deliveryCharge)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge)}</strong></div>`:""}${taxes}<div class="grand"><span>${receipt?"AMOUNT RECEIVED":"TOTAL DUE"}</span><strong>${money(receipt?paid:i.total)}</strong></div>${isInvoice&&!receipt?`<div class="balance-row"><span>Amount paid</span><strong>${money(paid)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div></div>
+    <div class="print-sign"><div>Prepared by <span></span></div><div>Customer acknowledgement <span></span></div></div>
+    <div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · ${esc(i.number)}</span></div>
   </div>`;
   await waitForPrintAssets();
   window.print();
+}
+
+async function printPurchase(kind,id){
+  const invoice=kind==="invoice",doc=(invoice?state.purchaseInvoices:state.purchaseOrders).find(x=>x.id===id);if(!doc)return;const s=state.settings;
+  const rows=doc.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.sku||"")}</small></td><td class="num">${x.qty}</td><td class="num">${money(x.cost)}</td><td class="num">${money(x.qty*x.cost)}</td></tr>`}).join("");
+  const balance=Math.max(0,Number(doc.total||0)-Number(doc.paid||0));
+  $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="assets/elitevolt-logo.png"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>${invoice?"PURCHASE INVOICE":"PURCHASE ORDER"}</span><strong>${esc(doc.number)}</strong><small>${invoice?`Supplier ref. ${esc(doc.reference||"—")}`:`Date ${esc(doc.date||"")}`}</small></div></div><div class="modern-accent"></div><div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">SUPPLIER</span><strong>${esc(doc.supplierName||"Supplier")}</strong>${doc.supplierContactPerson?`<span>${esc(doc.supplierContactPerson)}</span>`:""}${doc.supplierAddress?`<span>${esc(doc.supplierAddress)}</span>`:""}${doc.supplierPhone?`<span>${esc(doc.supplierPhone)}</span>`:""}${doc.supplierEmail?`<span>${esc(doc.supplierEmail)}</span>`:""}${doc.supplierTaxId?`<span>Tax ID: ${esc(doc.supplierTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${invoice?"BILL DETAILS":"DELIVER TO"}</span><strong>${esc(s.name)}</strong><span>${esc(s.address||"")}</span><span>${invoice?`Invoice date: ${esc(doc.date||"")}`:`Expected: ${esc(doc.date||"")}`}</span>${invoice&&doc.dueDate?`<span>Due date: ${esc(doc.dueDate)}</span>`:""}<span>Status: ${esc(doc.status||"Draft")}</span>${doc.sourceOrderId?`<span>Purchase order: ${esc(state.purchaseOrders.find(x=>x.id===doc.sourceOrderId)?.number||"")}</span>`:""}</div></div><table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table><div class="modern-summary"><div class="modern-terms">${doc.note?`<div class="print-note"><strong>Notes</strong><div>${esc(doc.note)}</div></div>`:""}${doc.instructions?`<div class="print-note"><strong>Delivery instructions</strong><div>${esc(doc.instructions)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(doc.subtotal)}</strong></div><div><span>Discount</span><strong>− ${money(doc.discount)}</strong></div>${Number(doc.otherCharges||0)?`<div><span>Other charges</span><strong>${money(doc.otherCharges)}</strong></div>`:""}${Number(doc.tax||0)?`<div><span>Supplier tax / duty</span><strong>${money(doc.tax)}</strong></div>`:""}<div class="grand"><span>${invoice?"INVOICE TOTAL":"ORDER TOTAL"}</span><strong>${money(doc.total)}</strong></div>${invoice?`<div class="balance-row"><span>Paid</span><strong>${money(doc.paid||0)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance)}</strong></div>`:""}</div></div><div class="print-sign"><div>Authorized by <span></span></div><div>Supplier acknowledgement <span></span></div></div><div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · ${esc(doc.number)}</span></div></div>`;
+  await waitForPrintAssets();window.print();
+}
+async function printWaybill(id){
+  const wb=state.waybills.find(x=>x.id===id);if(!wb)return;const s=state.settings;
+  const rows=wb.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.sku||"")}</small></td><td class="num">${x.qty}</td><td class="num">${Number(x.handledQty||0)}</td><td></td></tr>`}).join("");
+  $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="assets/elitevolt-logo.png"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>${wb.direction==="incoming"?"GOODS RECEIVED NOTE":"DELIVERY WAYBILL"}</span><strong>${esc(wb.number)}</strong><small>${esc(wb.date||"")}</small></div></div><div class="modern-accent"></div><div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${wb.direction==="incoming"?"RECEIVED FROM":"DELIVER TO"}</span><strong>${esc(wb.partyName||"")}</strong><span>${esc(wb.carrier||"")}</span><span>${esc(wb.reference||"")}</span></div><div class="modern-address"><span class="print-eyebrow">WAYBILL DETAILS</span><strong>${esc(wb.status||"Prepared")}</strong><span>Source: ${esc(wb.sourceNumber||"Standalone")}</span>${wb.note?`<span>${esc(wb.note)}</span>`:""}</div></div><table class="print-table modern-table"><thead><tr><th>#</th><th>Goods description</th><th class="num">Qty planned</th><th class="num">Qty handled</th><th>Condition / remarks</th></tr></thead><tbody>${rows}</tbody></table><div class="waybill-signatures"><div>Dispatched / received by <span></span></div><div>Driver / carrier <span></span></div><div>Customer / storekeeper <span></span></div></div><div class="print-footer"><span>Please verify quantities and condition on receipt.</span><span>${esc(s.name)} · ${esc(wb.number)}</span></div></div>`;
+  await waitForPrintAssets();window.print();
 }
 
 
@@ -716,5 +943,5 @@ $("#printReportBtn").onclick=()=>{
   waitForPrintAssets().then(()=>window.print());
 };
 
-["stockSearch","stockFilter","salesSearch","salesStatus","customerSearch"].forEach(id=>{const el=$("#"+id);el?.addEventListener("input",renderAll);el?.addEventListener("change",renderAll)});
+["stockSearch","stockFilter","salesSearch","salesStatus","customerSearch","waybillSearch","waybillDirection"].forEach(id=>{const el=$("#"+id);el?.addEventListener("input",renderAll);el?.addEventListener("change",renderAll)});
 window.addEventListener("load",()=>{init();$("#connectDriveBtn").disabled=true});
