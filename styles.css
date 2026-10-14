@@ -55,6 +55,7 @@ button,input,select,textarea{font:inherit}button{cursor:pointer}.hidden{display:
   .print-footer{position:static;margin-top:10px;border-top:1px solid #dbe2e8;padding-top:5px;font-size:7px;color:#667583;display:flex;justify-content:space-between}
   .receipt-document .print-table th,.receipt-document .print-table td{font-size:7px;padding:4px}.receipt-document .print-head img{width:45px;height:45px}.receipt-document .print-title{margin:7px 0}
 }
+.action-menu-list{box-sizing:border-box;overscroll-behavior:contain}
 .table-sub{display:block;font-size:9px;color:var(--muted);margin-top:2px}
 @media(max-width:760px){.purchase-line{grid-template-columns:minmax(0,1fr) minmax(75px,.5fr) minmax(85px,.7fr) auto}.purchase-line .p-line-total{grid-column:2/4;text-align:right}.purchase-line .remove-purchase-line{grid-column:4;grid-row:1}.purchase-line.waybill-line{grid-template-columns:minmax(0,1fr) minmax(80px,.5fr) auto}.purchase-line.waybill-line>span{grid-column:1/3}.purchase-line.waybill-line .remove-purchase-line{grid-column:3;grid-row:1}.supplier-select{flex-direction:column}.head-actions{flex-wrap:wrap}.head-actions .btn{flex:1 1 45%}}
 @media print{

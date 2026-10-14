@@ -36,6 +36,11 @@ let driveFileId = null;
 let driveFolderId = null;
 let saveTimer = null;
 let driveReady = false;
+let authAttempt = 0;
+let authTimeout = null;
+let activeActionMenu = null;
+let activeActionList = null;
+let activeActionButton = null;
 
 function defaultState(){
   return {
@@ -139,19 +144,31 @@ function maybeAuthReady(){
 }
 async function connectDrive(){
   if(!tokenClient){toast("Google sign-in is not ready yet.","error");return}
+  const attempt=++authAttempt;
+  clearTimeout(authTimeout);
   setAuthLoading(true);$("#authStatus").textContent="Connecting securely to Google Drive…";
+  authTimeout=setTimeout(()=>{
+    if(attempt!==authAttempt)return;
+    authAttempt++;authTimeout=null;driveReady=false;setDriveStatus("Offline");setAuthLoading(false);
+    $("#authStatus").textContent="Google sign-in is taking longer than expected. Allow pop-ups for this site, then try again.";
+    $("#connectDriveBtn").textContent="Try again";
+    toast("Google did not respond. Check pop-up permissions and try again.","error");
+  },60000);
   tokenClient.callback=async(resp)=>{
-    if(resp.error){setAuthLoading(false);$("#authStatus").textContent="Google Drive connection was cancelled or could not be completed.";toast("Google authorization failed.","error");return}
+    if(attempt!==authAttempt)return;
+    if(resp.error){clearTimeout(authTimeout);authTimeout=null;authAttempt++;driveReady=false;setDriveStatus("Offline");setAuthLoading(false);$("#authStatus").textContent="Google Drive connection was cancelled or could not be completed. You can try again.";$("#connectDriveBtn").textContent="Try again";toast("Google authorization failed.","error");return}
     try{
       driveReady=true; setDriveStatus("Connected",true);
+      $("#authStatus").textContent="Google account connected. Loading your Drive workspace…";
       await loadFromDrive();
+      if(attempt!==authAttempt)return;
+      clearTimeout(authTimeout);authTimeout=null;
       setAuthLoading(false);
       showApp();
       toast("Google Drive connected.");
-    }catch(e){console.error(e);driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Drive connected, but workspace data could not be loaded. You can reconnect and try again.";setDriveStatus("Load error");toast("Drive connection worked, but data could not be loaded.","error");}
+    }catch(e){if(attempt!==authAttempt)return;console.error(e);clearTimeout(authTimeout);authTimeout=null;authAttempt++;driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Drive connected, but workspace data could not be loaded. Check your connection and try again.";$("#connectDriveBtn").textContent="Try again";setDriveStatus("Load error");toast("Drive connection worked, but data could not be loaded.","error");}
   };
-  const existing=gapi.client.getToken();
-  try{tokenClient.requestAccessToken({prompt:existing?"":"consent"})}catch(e){setAuthLoading(false);$("#authStatus").textContent="Google Drive could not be opened. Please try again.";toast("Google authorization failed.","error")}
+  try{const existing=gapi.client.getToken();tokenClient.requestAccessToken({prompt:existing?"":"consent"})}catch(e){if(attempt!==authAttempt)return;clearTimeout(authTimeout);authTimeout=null;authAttempt++;driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Google Drive could not be opened. Please try again.";$("#connectDriveBtn").textContent="Try again";toast("Google authorization failed.","error")}
 }
 async function loadFromDrive(){
   const qFolder=`name='${APP_FOLDER.replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
@@ -303,6 +320,46 @@ function renderDashboard(){
   const recent=[...state.invoices].filter(i=>!i.deletedAt).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).slice(0,8);
   $("#recentInvoicesTable").innerHTML=recent.length?recent.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${esc(i.customerName||"Customer missing")}</td><td>${esc(i.date||"—")}</td><td>${esc(i.dueDate||"—")}</td><td>${money(i.total,i.currency||currency)}</td><td>${money(invoiceBalance(i),i.currency||currency)}</td><td><span class="badge ${statusClass(effectiveInvoiceStatus(i))}">${esc(effectiveInvoiceStatus(i))}</span></td></tr>`).join(""):`<tr><td colspan="7" class="empty">Create your first invoice to see recent billing activity.</td></tr>`;
 }
+function positionActionMenu(){
+  const list=activeActionList,button=activeActionButton;if(!list||!button)return;
+  if(!button.isConnected||!list.isConnected){closeActionMenus();return}
+  const pad=8,gap=6,viewportWidth=Math.min(window.innerWidth,document.documentElement.clientWidth||window.innerWidth),viewportHeight=window.innerHeight;
+  list.style.minWidth=`${Math.max(1,Math.min(190,viewportWidth-pad*2))}px`;
+  list.style.maxWidth=`${Math.max(1,viewportWidth-pad*2)}px`;list.style.maxHeight="";list.style.overflowY="";
+  const anchor=button.getBoundingClientRect();let box=list.getBoundingClientRect();
+  const below=Math.max(0,viewportHeight-pad-anchor.bottom-gap),above=Math.max(0,anchor.top-pad-gap);
+  let top;
+  if(box.height<=below)top=anchor.bottom+gap;
+  else if(box.height<=above)top=anchor.top-box.height-gap;
+  else{const openBelow=below>=above,available=Math.max(96,Math.max(below,above));list.style.maxHeight=`${available}px`;list.style.overflowY="auto";box=list.getBoundingClientRect();top=openBelow?anchor.bottom+gap:anchor.top-box.height-gap}
+  const left=Math.max(pad,Math.min(anchor.right-box.width,viewportWidth-box.width-pad));
+  list.style.top=`${Math.max(pad,Math.min(top,viewportHeight-box.height-pad))}px`;list.style.left=`${left}px`;list.style.right="auto";list.style.bottom="auto";
+}
+function closeActionMenus(){
+  const opened=[...document.querySelectorAll(".action-menu.open")];if(activeActionMenu&&!opened.includes(activeActionMenu))opened.push(activeActionMenu);
+  opened.forEach(menu=>{
+    menu.classList.remove("open");const button=menu.querySelector(".action-menu-toggle")||activeActionButton;button?.setAttribute("aria-expanded","false");
+    const list=(activeActionMenu===menu?activeActionList:null)||menu.querySelector(".action-menu-list");
+    if(list){if(list._actionMenuHome)list._actionMenuHome.appendChild(list);["position","display","flexDirection","visibility","top","left","right","bottom","minWidth","maxWidth","maxHeight","overflowY","zIndex"].forEach(key=>list.style[key]="")}
+  });
+  activeActionMenu=null;activeActionList=null;activeActionButton=null;
+}
+function openActionMenu(button){
+  const menu=button.closest(".action-menu"),wasOpen=activeActionMenu===menu||menu.classList.contains("open");closeActionMenus();if(wasOpen)return;
+  const list=menu.querySelector(".action-menu-list");if(!list)return;
+  activeActionMenu=menu;activeActionList=list;activeActionButton=button;list._actionMenuHome=menu;menu.classList.add("open");button.setAttribute("aria-expanded","true");
+  list.style.position="fixed";list.style.visibility="hidden";list.style.display="flex";list.style.flexDirection="column";list.style.zIndex="1001";
+  document.body.appendChild(list);positionActionMenu();list.style.visibility="visible";
+}
+document.addEventListener("click",e=>{
+  const target=e.target instanceof Element?e.target:null;
+  if(target?.closest(".action-menu-toggle"))return;
+  if(target?.closest(".action-menu-list")){if(target.closest(".action-menu-list button"))closeActionMenus();return}
+  closeActionMenus();
+});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&activeActionMenu){const button=activeActionButton;closeActionMenus();button?.focus()}});
+window.addEventListener("resize",positionActionMenu);
+window.addEventListener("scroll",positionActionMenu,{passive:true});
 function destroyChart(k){if(charts[k]){charts[k].destroy();charts[k]=null}}
 function renderRevenueChart(currency){
   destroyChart("revenue30");const dates=Array.from({length:30},(_,i)=>{const d=new Date();d.setDate(d.getDate()-(29-i));return d.toISOString().slice(0,10)});
@@ -331,27 +388,8 @@ function renderStock(){
   }).join(""):`<tr><td colspan="8" class="empty">No products found.</td></tr>`;
   $$('[data-edit-product]').forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
   $$('[data-adjust-product]').forEach(b=>b.onclick=()=>openAdjust(b.dataset.adjustProduct));
-  $$('[data-delete-product]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteProduct(b.dataset.deleteProduct)});
-  $$('#stockTable .action-menu-toggle').forEach(b=>b.onclick=(e)=>{
-    e.stopPropagation();
-    const menu=b.closest('.action-menu');
-    const wasOpen=menu.classList.contains('open');
-    document.querySelectorAll('.action-menu.open').forEach(x=>{
-      x.classList.remove('open');
-      const t=x.querySelector('.action-menu-toggle'); if(t)t.setAttribute('aria-expanded','false');
-      const list=x.querySelector('.action-menu-list'); if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';list.style.maxHeight='';list.style.overflowY='';}
-    });
-    if(wasOpen){b.setAttribute('aria-expanded','false');return;}
-    menu.classList.add('open'); b.setAttribute('aria-expanded','true');
-    const list=menu.querySelector('.action-menu-list'); if(!list)return;
-    list.style.position='fixed'; list.style.visibility='hidden'; list.style.display='flex'; list.style.flexDirection='column';
-    const br=b.getBoundingClientRect(), gap=6, pad=8;
-    let lr=list.getBoundingClientRect(), top=br.bottom+gap;
-    if(top+lr.height>window.innerHeight-pad) top=Math.max(pad,br.top-lr.height-gap);
-    if(top+lr.height>window.innerHeight-pad){list.style.maxHeight=Math.max(120,window.innerHeight-top-pad)+'px';list.style.overflowY='auto';lr=list.getBoundingClientRect();top=Math.min(top,window.innerHeight-lr.height-pad);}
-    let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
-    list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';list.style.right='auto';list.style.bottom='auto';list.style.visibility='visible';
-  });
+  $$('[data-delete-product]').forEach(b=>b.onclick=()=>{closeActionMenus();deleteProduct(b.dataset.deleteProduct)});
+  $$('#stockTable .action-menu-toggle').forEach(b=>b.onclick=e=>{e.stopPropagation();openActionMenu(b)});
 }
 function allDocuments(){
   return [
@@ -390,46 +428,8 @@ function renderSales(){
   $$('[data-send-sales-doc]').forEach(b=>b.onclick=()=>updateSalesDocStatus(...b.dataset.sendSalesDoc.split(":"),"Sent"));
   $$('[data-accept-sales-doc]').forEach(b=>b.onclick=()=>updateSalesDocStatus(...b.dataset.acceptSalesDoc.split(":"),"Accepted"));
   $$('[data-create-waybill]').forEach(b=>b.onclick=()=>{const [type,id]=b.dataset.createWaybill.split(":");openWaybill(type,id)});
-  $$('.action-menu-toggle').forEach(b=>b.onclick=(e)=>{
-    e.stopPropagation();
-    const menu=b.closest('.action-menu');
-    const wasOpen=menu.classList.contains('open');
-    document.querySelectorAll('.action-menu.open').forEach(x=>{
-      x.classList.remove('open');
-      const t=x.querySelector('.action-menu-toggle');
-      if(t)t.setAttribute('aria-expanded','false');
-      const list=x.querySelector('.action-menu-list');
-      if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';}
-    });
-    if(wasOpen){b.setAttribute('aria-expanded','false');return;}
-    menu.classList.add('open');
-    b.setAttribute('aria-expanded','true');
-    const list=menu.querySelector('.action-menu-list');
-    if(!list)return;
-    list.style.position='fixed';
-    list.style.visibility='hidden';
-    list.style.display='flex';
-    list.style.flexDirection='column';
-    const br=b.getBoundingClientRect();
-    const lr=list.getBoundingClientRect();
-    const gap=6, pad=8;
-    let top=br.bottom+gap;
-    if(top+lr.height>window.innerHeight-pad){top=Math.max(pad,br.top-lr.height-gap);}
-    if(top+lr.height>window.innerHeight-pad){
-      list.style.maxHeight=Math.max(120,window.innerHeight-top-pad)+'px';
-      list.style.overflowY='auto';
-      const adjusted=list.getBoundingClientRect();
-      top=Math.min(top,window.innerHeight-adjusted.height-pad);
-    }
-    let left=br.right-lr.width;
-    left=Math.max(pad,Math.min(left,window.innerWidth-lr.width-pad));
-    list.style.top=Math.round(top)+'px';
-    list.style.left=Math.round(left)+'px';
-    list.style.right='auto';
-    list.style.bottom='auto';
-    list.style.visibility='visible';
-  });
-  $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{document.querySelectorAll('.action-menu.open').forEach(x=>x.classList.remove('open'));deleteDocument(type,id)}});
+  $$('.action-menu-toggle').forEach(b=>b.onclick=e=>{e.stopPropagation();openActionMenu(b)});
+  $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{closeActionMenus();deleteDocument(type,id)}});
 }
 function $t(sel){return document.querySelector(sel)}
 
@@ -471,25 +471,6 @@ function renderWaybills(){
   $$('[data-print-waybill]').forEach(b=>b.onclick=()=>printWaybill(b.dataset.printWaybill));
   $$('[data-complete-waybill]').forEach(b=>b.onclick=()=>completeWaybill(b.dataset.completeWaybill));
 }
-document.addEventListener('click',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
-  x.classList.remove('open');
-  const t=x.querySelector('.action-menu-toggle');if(t)t.setAttribute('aria-expanded','false');
-  const list=x.querySelector('.action-menu-list');if(list){list.style.top='';list.style.left='';list.style.right='';list.style.bottom='';list.style.visibility='';list.style.maxHeight='';list.style.overflowY='';}
-}));
-window.addEventListener('resize',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
-  const b=x.querySelector('.action-menu-toggle'),list=x.querySelector('.action-menu-list');if(!b||!list)return;
-  const br=b.getBoundingClientRect(),lr=list.getBoundingClientRect(),gap=6,pad=8;
-  let top=br.bottom+gap;if(top+lr.height>window.innerHeight-pad)top=Math.max(pad,br.top-lr.height-gap);
-  let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
-  list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';
-}));
-window.addEventListener('scroll',()=>document.querySelectorAll('.action-menu.open').forEach(x=>{
-  const b=x.querySelector('.action-menu-toggle'),list=x.querySelector('.action-menu-list');if(!b||!list)return;
-  const br=b.getBoundingClientRect(),lr=list.getBoundingClientRect(),gap=6,pad=8;
-  let top=br.bottom+gap;if(top+lr.height>window.innerHeight-pad)top=Math.max(pad,br.top-lr.height-gap);
-  let left=Math.max(pad,Math.min(br.right-lr.width,window.innerWidth-lr.width-pad));
-  list.style.top=Math.round(top)+'px';list.style.left=Math.round(left)+'px';
-},{passive:true}));
 function renderCashflow(){
   const currency=state.settings.currency||"GHS",allTransactions=state.transactions.filter(t=>!t.deletedAt),activeTransactions=allTransactions.filter(t=>(t.currency||currency)===currency);
   const ins=activeTransactions.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0),outs=activeTransactions.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0);
