@@ -4,6 +4,9 @@ const SCOPES = "https://www.googleapis.com/auth/drive.file";
 const DISCOVERY_DOC = "https://www.googleapis.com/discovery/v1/apis/drive/v3/rest";
 const APP_FOLDER = "EliteVolt Systems Data";
 const DATA_FILE = "elitevolt-data.json";
+const LOCAL_DATA_KEY = "evs-flow-local-workspace-v1";
+const LOCAL_DB_NAME = "evs-flow-local-workspace";
+const LOCAL_DB_STORE = "workspace";
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => [...document.querySelectorAll(s)];
@@ -28,6 +31,7 @@ function makeSku(category, productName){
 }
 const esc = (s="") => String(s).replace(/[&<>"']/g,m=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[m]));
 const businessLogoSource = () => esc(state.settings.logoData || "assets/elitevolt-logo.png");
+const printLogoWatermark = () => `<img class="print-logo-watermark" src="${businessLogoSource()}" alt="" aria-hidden="true">`;
 
 let state = defaultState();
 let charts = {};
@@ -36,6 +40,11 @@ let driveFileId = null;
 let driveFolderId = null;
 let saveTimer = null;
 let driveReady = false;
+let driveWorkspaceLoaded = false;
+let driveSavePromise = null;
+let driveSaveQueued = false;
+let localDbPromise = null;
+let localWritePromise = Promise.resolve();
 let authAttempt = 0;
 let authTimeout = null;
 let activeActionMenu = null;
@@ -86,7 +95,7 @@ function mergeState(raw){
   return {
     ...base,...raw,
     version:4,
-    products:Array.isArray(raw?.products)?raw.products:[],
+    products:Array.isArray(raw?.products)?raw.products.map(p=>({...p,description:p.description||""})):[],
     customers:Array.isArray(raw?.customers)?raw.customers:[],
     invoices:Array.isArray(raw?.invoices)?raw.invoices.map(i=>({...i,currency:i.currency||"GHS",dueDate:i.dueDate||addDays(i.date||today(),30),items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("line")})):[],stockDeducted:i.stockDeducted??false,paid:Number(i.paid||0),delivered:!!i.delivered,reserved:i.reserved??(Number(i.paid||0)>0&&!i.delivered)})):[],
     estimates:Array.isArray(raw?.estimates)?raw.estimates.map(i=>({...i,currency:i.currency||"GHS",items:Array.isArray(i.items)?i.items.map(x=>({...x,lineId:x.lineId||uid("line")})):[]})):[],
@@ -160,17 +169,27 @@ async function connectDrive(){
     try{
       driveReady=true; setDriveStatus("Connected",true);
       $("#authStatus").textContent="Google account connected. Loading your Drive workspace…";
+      driveWorkspaceLoaded=false;
       await loadFromDrive();
       if(attempt!==authAttempt)return;
       clearTimeout(authTimeout);authTimeout=null;
       setAuthLoading(false);
       showApp();
       toast("Google Drive connected.");
-    }catch(e){if(attempt!==authAttempt)return;console.error(e);clearTimeout(authTimeout);authTimeout=null;authAttempt++;driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Drive connected, but workspace data could not be loaded. Check your connection and try again.";$("#connectDriveBtn").textContent="Try again";setDriveStatus("Load error");toast("Drive connection worked, but data could not be loaded.","error");}
+    }catch(e){
+      if(attempt!==authAttempt)return;
+      console.error(e);clearTimeout(authTimeout);authTimeout=null;authAttempt++;setAuthLoading(false);
+      const local=await readLocalWorkspace();if(local)state=mergeState(local.state);else{state=defaultState();await saveLocalWorkspace()}
+      driveWorkspaceLoaded=false;driveFileId=null;driveFolderId=null;
+      $("#authStatus").textContent="Google Drive is temporarily unavailable. You can keep working from this device; changes are saved locally.";
+      $("#connectDriveBtn").textContent="Try again";setDriveStatus("Local mode",true);$("#driveDetails").textContent="Local workspace active. Drive sync will resume when the connection is available.";
+      showApp();toast("Drive could not load. Your local workspace is ready and will sync when available.","info");
+    }
   };
   try{const existing=gapi.client.getToken();tokenClient.requestAccessToken({prompt:existing?"":"consent"})}catch(e){if(attempt!==authAttempt)return;clearTimeout(authTimeout);authTimeout=null;authAttempt++;driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Google Drive could not be opened. Please try again.";$("#connectDriveBtn").textContent="Try again";toast("Google authorization failed.","error")}
 }
 async function loadFromDrive(){
+  const local=await readLocalWorkspace();
   const qFolder=`name='${APP_FOLDER.replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
   const folders=await gapi.client.drive.files.list({q:qFolder,fields:"files(id,name)",pageSize:10});
   if(folders.result.files?.length) driveFolderId=folders.result.files[0].id;
@@ -180,43 +199,108 @@ async function loadFromDrive(){
   }
   const qFile=`name='${DATA_FILE}' and '${driveFolderId}' in parents and trashed=false`;
   const files=await gapi.client.drive.files.list({q:qFile,fields:"files(id,name,modifiedTime)",pageSize:10});
+  let shouldSync=false;
   if(files.result.files?.length){
     driveFileId=files.result.files[0].id;
     const r=await gapi.client.drive.files.get({fileId:driveFileId,alt:"media"});
-    state=mergeState(typeof r.body==="string"?JSON.parse(r.body):r.body);
+    const cloudState=typeof r.body==="string"?JSON.parse(r.body):r.body;
+    const hasUnsyncedLocal=local&&Number(local.savedAt||0)>Number(local.syncedAt||0);
+    state=mergeState(hasUnsyncedLocal?local.state:cloudState);
+    shouldSync=!!hasUnsyncedLocal;
+    if(!hasUnsyncedLocal)await saveLocalWorkspace(true);
   }else{
-    await saveToDrive(true);
+    state=local?mergeState(local.state):defaultState();
+    shouldSync=true;
   }
+  driveWorkspaceLoaded=true;
+  if(shouldSync)await saveToDrive(true);
   $("#driveDetails").textContent=`Folder: ${APP_FOLDER} • Data file: ${DATA_FILE}`;
 }
-async function saveToDrive(silent=false){
-  if(!driveReady) return;
+function openLocalWorkspaceDb(){
+  if(!window.indexedDB)return Promise.reject(new Error("IndexedDB is unavailable"));
+  if(!localDbPromise)localDbPromise=new Promise((resolve,reject)=>{
+    const request=window.indexedDB.open(LOCAL_DB_NAME,1);
+    request.onupgradeneeded=()=>{if(!request.result.objectStoreNames.contains(LOCAL_DB_STORE))request.result.createObjectStore(LOCAL_DB_STORE)};
+    request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error||new Error("Local database could not be opened"));
+  });
+  return localDbPromise;
+}
+function readLocalStorageWorkspace(){
+  try{const parsed=JSON.parse(localStorage.getItem(LOCAL_DATA_KEY)||"null");return parsed?.state&&typeof parsed.state==="object"?parsed:null}
+  catch(e){console.warn("Local workspace backup could not be read.",e);return null}
+}
+async function readLocalWorkspace(){
   try{
-    const body=JSON.stringify(state,null,2);
-    if(!driveFileId){
-      const boundary="----EliteVoltBoundary"+Date.now();
-      const metadata={name:DATA_FILE,mimeType:"application/json",parents:[driveFolderId]};
-      const payload=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
-      const token=gapi.client.getToken().access_token;
-      const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",{
-        method:"POST",headers:{"Authorization":`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},body:payload
-      });
-      if(!r.ok) throw new Error(await r.text());
-      const data=await r.json();driveFileId=data.id;
-    }else{
-      const token=gapi.client.getToken().access_token;
-      const r=await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,{
-        method:"PATCH",headers:{"Authorization":`Bearer ${token}`,"Content-Type":"application/json"},body
-      });
-      if(!r.ok) throw new Error(await r.text());
-    }
-    setDriveStatus("Synced",true);
-    if(!silent) toast("Saved to Google Drive.");
-  }catch(e){console.error(e);setDriveStatus("Sync error");toast("Could not save to Drive.");}
+    const db=await openLocalWorkspaceDb();
+    const saved=await new Promise((resolve,reject)=>{const request=db.transaction(LOCAL_DB_STORE,"readonly").objectStore(LOCAL_DB_STORE).get("primary");request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error)});
+    if(saved?.state&&typeof saved.state==="object")return saved;
+  }catch(e){console.warn("Indexed local workspace backup could not be read; checking browser storage.",e)}
+  return readLocalStorageWorkspace();
+}
+function saveLocalWorkspace(markSynced=false,syncedBody=""){
+  const snapshot=JSON.parse(JSON.stringify(state));
+  const write=async()=>{
+    try{
+      const previous=await readLocalWorkspace(),now=Date.now(),matchesCloud=!syncedBody||JSON.stringify(snapshot,null,2)===syncedBody;
+      const saved={savedAt:now,syncedAt:markSynced&&matchesCloud?now:Number(previous?.syncedAt||0),state:snapshot};
+      try{
+        const db=await openLocalWorkspaceDb();
+        await new Promise((resolve,reject)=>{const transaction=db.transaction(LOCAL_DB_STORE,"readwrite");transaction.objectStore(LOCAL_DB_STORE).put(saved,"primary");transaction.oncomplete=()=>resolve();transaction.onerror=()=>reject(transaction.error);transaction.onabort=()=>reject(transaction.error||new Error("Local backup transaction was aborted"))});
+      }catch(e){localStorage.setItem(LOCAL_DATA_KEY,JSON.stringify(saved))}
+      return true;
+    }catch(e){console.warn("Local workspace backup could not be saved.",e);return false}
+  };
+  localWritePromise=localWritePromise.then(write,write);
+  return localWritePromise;
+}
+async function saveToDrive(silent=false){
+  const localSaved=await saveLocalWorkspace();
+  if(!driveReady||!driveWorkspaceLoaded){setDriveStatus(localSaved?"Saved locally":"Local save error",localSaved);if(!localSaved&&!silent)toast("This browser could not save the local workspace.","error");return false}
+  if(driveSavePromise){driveSaveQueued=true;return driveSavePromise}
+  driveSavePromise=(async()=>{
+    do{
+      driveSaveQueued=false;
+      const body=JSON.stringify(state,null,2);
+      try{
+        setDriveStatus("Syncing…",true);
+        if(!driveFileId){
+          const boundary="----EliteVoltBoundary"+Date.now();
+          const metadata={name:DATA_FILE,mimeType:"application/json",parents:[driveFolderId]};
+          const payload=`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n${body}\r\n--${boundary}--`;
+          const token=gapi.client.getToken().access_token;
+          const r=await fetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name",{
+            method:"POST",headers:{"Authorization":`Bearer ${token}`,"Content-Type":`multipart/related; boundary=${boundary}`},body:payload
+          });
+          if(!r.ok) throw new Error(await r.text());
+          const data=await r.json();driveFileId=data.id;
+        }else{
+          const token=gapi.client.getToken().access_token;
+          const r=await fetch(`https://www.googleapis.com/upload/drive/v3/files/${driveFileId}?uploadType=media`,{
+            method:"PATCH",headers:{"Authorization":`Bearer ${token}`,"Content-Type":"application/json"},body
+          });
+          if(!r.ok) throw new Error(await r.text());
+        }
+        if(body!==JSON.stringify(state,null,2)){driveSaveQueued=true;await saveLocalWorkspace();continue}
+        await saveLocalWorkspace(true,body);setDriveStatus("Synced",true);
+        if(!silent)toast("Saved to Google Drive.");
+      }catch(e){console.error(e);const backedUp=await saveLocalWorkspace();setDriveStatus(backedUp?"Sync pending · local saved":"Sync error · local save failed",backedUp);if(!silent)toast(backedUp?"Drive sync is unavailable. Your changes are saved on this device.":"Drive and local backup both failed.",backedUp?"info":"error");return false}
+    }while(driveSaveQueued&&driveReady);
+    return true;
+  })();
+  try{return await driveSavePromise}
+  finally{driveSavePromise=null;if(driveSaveQueued&&driveReady){driveSaveQueued=false;saveToDrive(true)}}
+}
+async function retryDriveSync(silent=false){
+  if(!driveReady){setDriveStatus("Saved locally",true);return false}
+  if(!driveWorkspaceLoaded){try{await loadFromDrive();return driveWorkspaceLoaded}catch(e){console.warn("Drive sync will retry when available.",e);setDriveStatus("Sync pending · local saved");if(!silent)toast("Drive is still unavailable. Your changes remain saved locally.","info");return false}}
+  return saveToDrive(silent);
 }
 function scheduleSave(){
-  clearTimeout(saveTimer); setDriveStatus("Saving…",true);
-  saveTimer=setTimeout(()=>saveToDrive(),700);
+  const localSave=saveLocalWorkspace();
+  clearTimeout(saveTimer);
+  setDriveStatus(driveReady?"Syncing…":"Saving locally…",true);
+  localSave.then(saved=>{if(!saved){setDriveStatus("Local save error");toast("This browser could not save the local workspace.","error")}else if(!driveReady)setDriveStatus("Saved locally",true)});
+  saveTimer=setTimeout(()=>saveToDrive(true),700);
 }
 function audit(action,record="",details=""){
   state.auditLog=Array.isArray(state.auditLog)?state.auditLog:[];
@@ -267,7 +351,7 @@ function taxBreakdown(base, raw){
 function documentTaxBase(doc){return round2(Math.max(0,Number(doc.subtotal||0)-Number(doc.discount||0)+Number(doc.deliveryCharge||0)+Number(doc.laborCharge||0)))}
 function invoiceCreditTotal(id){return round2(state.creditNotes.filter(c=>c.invoiceId===id&&!c.voidedAt).reduce((n,c)=>n+Number(c.amount||0),0))}
 function invoiceBalance(inv){if(inv.status==="Void"||inv.voidedAt)return 0;return round2(Math.max(0,Number(inv.total||0)-Number(inv.paid||0)-invoiceCreditTotal(inv.id)))}
-function effectiveSalesDocStatus(doc){if(doc.convertedToNumber||doc.status==="Converted")return "Converted";if(doc.acceptedAt||doc.status==="Accepted")return "Accepted";if(doc.validUntil&&doc.validUntil<today()&&(doc.sentAt||doc.status==="Sent"))return "Expired";return doc.sentAt||doc.status==="Sent"?"Sent":"Draft"}
+function effectiveSalesDocStatus(doc){if(doc.convertedToNumber||doc.status==="Converted")return "Converted";if(doc.acceptedAt||doc.status==="Accepted")return "Accepted";if(doc.validUntil&&doc.validUntil<today()&&(doc.sentAt||doc.status==="Sent"))return "Expired";if(doc.status==="Approved")return "Approved";return doc.sentAt||doc.status==="Sent"?"Sent":"Draft"}
 function effectiveInvoiceStatus(inv){
   if(inv.status==="Void"||inv.voidedAt)return "Void";
   if(invoiceBalance(inv)<=0)return Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Credited";
@@ -275,7 +359,7 @@ function effectiveInvoiceStatus(inv){
   if(Number(inv.paid||0)>0)return "Partially Paid";
   return inv.status||"Draft";
 }
-function statusClass(status){return status==="Paid"||status==="Credited"||status==="Delivered"||status==="Accepted"?"paid":status==="Partially Paid"||status==="Part-paid"||status==="Overdue"||status==="Expired"?"part":status==="Void"?"void":"unpaid"}
+function statusClass(status){return status==="Paid"||status==="Credited"||status==="Delivered"||status==="Accepted"||status==="Approved"?"paid":status==="Partially Paid"||status==="Part-paid"||status==="Overdue"||status==="Expired"?"part":status==="Void"?"void":"unpaid"}
 function refreshInvoiceStatuses(){state.invoices.forEach(inv=>{if(inv.status!=="Void"&&!inv.voidedAt){const next=effectiveInvoiceStatus(inv);if(next!=="Credited")inv.status=next;}})}
 function reservedQty(productId, excludeId=""){
   return state.invoices.filter(i=>i.id!==excludeId&&!i.delivered&&!i.stockDeducted&&Number(i.paid||0)>0)
@@ -407,11 +491,11 @@ function renderSales(){
     let badge=isInv?effectiveInvoiceStatus(d):d.status||"Draft"; if(reserved) badge="Reserved / Awaiting delivery";
     const cls=reserved?"part":statusClass(badge);
      let menu=`<button class="icon-btn" data-print-doc="${d.id}">Print</button><button class="icon-btn" data-copy-doc="${d.id}">Copy as quote</button>`;
-     if(d.docType==="Estimate"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button>${badge==="Draft"?`<button class="icon-btn" data-send-sales-doc="estimate:${d.id}">Mark sent</button>`:""}${badge==="Sent"?`<button class="icon-btn" data-accept-sales-doc="estimate:${d.id}">Mark accepted</button>`:""}<button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
-     } else if(d.docType==="Proforma Invoice"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button>${badge==="Draft"?`<button class="icon-btn" data-send-sales-doc="proforma:${d.id}">Mark sent</button>`:""}${badge==="Sent"?`<button class="icon-btn" data-accept-sales-doc="proforma:${d.id}">Mark accepted</button>`:""}<button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+     if(d.docType==="Estimate"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button>${badge==="Draft"?`<button class="icon-btn" data-approve-sales-doc="estimate:${d.id}">Approve for client</button>`:""}${badge==="Approved"?`<button class="icon-btn" data-send-sales-doc="estimate:${d.id}">Mark sent</button>`:""}${badge==="Sent"?`<button class="icon-btn" data-accept-sales-doc="estimate:${d.id}">Mark accepted</button>`:""}<button class="icon-btn" data-email-doc="${d.id}">Send email</button><button class="icon-btn" data-whatsapp-doc="${d.id}">WhatsApp</button><button class="icon-btn" data-convert-pro="${d.id}">To Proforma</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
+     } else if(d.docType==="Proforma Invoice"){menu+=`<button class="icon-btn" data-edit-doc="${d.id}">Edit</button>${badge==="Draft"?`<button class="icon-btn" data-approve-sales-doc="proforma:${d.id}">Approve for client</button>`:""}${badge==="Approved"?`<button class="icon-btn" data-send-sales-doc="proforma:${d.id}">Mark sent</button>`:""}${badge==="Sent"?`<button class="icon-btn" data-accept-sales-doc="proforma:${d.id}">Mark accepted</button>`:""}<button class="icon-btn" data-email-doc="${d.id}">Send email</button><button class="icon-btn" data-whatsapp-doc="${d.id}">WhatsApp</button><button class="icon-btn" data-convert-inv="${d.id}">To Invoice</button>`;
      } else if(badge!=="Void") menu+=`${balance>0?`<button class="icon-btn" data-payment="${d.id}">Record payment</button>`:""}<button class="icon-btn" data-send-invoice="${d.id}">Mark sent</button><button class="icon-btn" data-email-doc="${d.id}">Send email</button><button class="icon-btn" data-whatsapp-doc="${d.id}">WhatsApp</button>${!d.delivered?`<button class="icon-btn" data-create-waybill="invoice:${d.id}">Create waybill</button>`:""}<button class="icon-btn" data-delivery="${d.id}">${d.delivered?"Delivered":"Confirm delivery"}</button>${state.receipts.some(r=>r.invoiceId===d.id)?`<button class="icon-btn" data-receipt="${d.id}">Latest receipt</button>`:""}<button class="icon-btn" data-void-doc="${d.id}">Void invoice</button>`;
     if(!isInv)menu+=`<button class="icon-btn danger-action" data-delete-doc="${d.docType}:${d.id}">Archive</button>`;
-     return `<tr><td><strong>${esc(d.number)}</strong><small class="table-sub">${d.docType==="Estimate"?"Quote / Estimate":esc(d.docType)}</small></td><td>${esc(d.date||"")}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total,d.currency||state.settings.currency)}</td><td>${isInv?money(paid,d.currency||state.settings.currency):"—"}</td><td>${isInv?money(balance,d.currency||state.settings.currency):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
+     return `<tr><td><button type="button" class="document-number-link" data-print-doc="${d.id}" title="Open printable document" aria-label="Open or print ${esc(d.number)}"><strong>${esc(d.number)}</strong></button><small class="table-sub">${d.docType==="Estimate"?"Quote / Estimate":esc(d.docType)}</small></td><td>${esc(d.date||"")}</td><td>${esc(d.customerName||"Customer missing")}</td><td>${money(d.total,d.currency||state.settings.currency)}</td><td>${isInv?money(paid,d.currency||state.settings.currency):"—"}</td><td>${isInv?money(balance,d.currency||state.settings.currency):"—"}</td><td><span class="badge ${cls}">${esc(badge)}</span></td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No documents found.</td></tr>`;
   $$('[data-print-doc]').forEach(b=>b.onclick=()=>printDocument(b.dataset.printDoc));
   $$('[data-copy-doc]').forEach(b=>b.onclick=()=>openCopyQuotation(b.dataset.copyDoc));
@@ -427,6 +511,7 @@ function renderSales(){
   $$('[data-convert-inv]').forEach(b=>b.onclick=()=>convertToInvoice(b.dataset.convertInv));
   $$('[data-send-sales-doc]').forEach(b=>b.onclick=()=>updateSalesDocStatus(...b.dataset.sendSalesDoc.split(":"),"Sent"));
   $$('[data-accept-sales-doc]').forEach(b=>b.onclick=()=>updateSalesDocStatus(...b.dataset.acceptSalesDoc.split(":"),"Accepted"));
+  $$('[data-approve-sales-doc]').forEach(b=>b.onclick=()=>updateSalesDocStatus(...b.dataset.approveSalesDoc.split(":"),"Approved"));
   $$('[data-create-waybill]').forEach(b=>b.onclick=()=>{const [type,id]=b.dataset.createWaybill.split(":");openWaybill(type,id)});
   $$('.action-menu-toggle').forEach(b=>b.onclick=e=>{e.stopPropagation();openActionMenu(b)});
   $$('[data-delete-doc]').forEach(b=>{const [type,id]=b.dataset.deleteDoc.split(":");b.onclick=()=>{closeActionMenus();deleteDocument(type,id)}});
@@ -639,6 +724,7 @@ function openProduct(id=null,onSaved=null){
     <small style="display:block;margin-top:5px;color:#7a8793;font-weight:400">${p?"Existing SKU is retained when editing.":"SKU will be generated automatically from category and product name."}</small>
   </label>
   <label>Category<input id="pCat" class="input" value="${esc(p?.category||"Solar / Electrical")}" placeholder="e.g. Solar Panels"></label>
+  <label class="product-description-field">Customer-facing description<textarea id="pDescription" class="input" rows="2" placeholder="What is included, key specifications, or service scope?">${esc(p?.description||"")}</textarea></label>
   <label>Unit<input id="pUnit" class="input" value="${esc(p?.unit||"pcs")}" placeholder="pcs, box, roll, set"></label>
   <label>Barcode<input id="pBarcode" class="input" value="${esc(p?.barcode||"")}" placeholder="Optional scanner code"></label>
   <label>Quantity<input id="pQty" type="number" min="0" class="input" value="${p?.qty??0}"></label>
@@ -668,6 +754,7 @@ function openProduct(id=null,onSaved=null){
     const obj={
       id:p?.id||uid("prod"),
       name,
+      description:$("#pDescription").value.trim(),
       sku,
       category,
       unit:$("#pUnit").value.trim()||"pcs",
@@ -718,15 +805,16 @@ function openSale(sourceId=null, copyMode=false, initialType="estimate"){
   modal(`<div class="modal-head"><div><div class="eyebrow">SALES DOCUMENT</div><h3>${source && !copyMode ? "Edit " + esc(source.number) : "Create a document"}</h3></div><button class="close" data-close-modal>×</button></div>
   <div class="sale-composer"><div class="sale-fields">
   <p class="muted">Build a branded quote or invoice with accurate tax totals and a live print preview. Stock is deducted when an invoice is created.</p>
-  <div class="two-col"><label>Document type<select id="sDocType" class="input" ${source&&!copyMode?"disabled":""}><option value="estimate" ${(initialType==="estimate"&&!source)||(source&&!copyMode&&sourceKind==="estimate")?"selected":""}>Quote / Estimate</option><option value="invoice" ${initialType==="invoice"&&!source?"selected":""} ${source&&!copyMode?"disabled":""}>Sales invoice</option>${sourceKind==="proforma"?`<option value="proforma" selected>Proforma invoice</option>`:""}</select></label><label>Currency<select id="sCurrency" class="input">${["GHS","USD","EUR","NGN"].map(c=>`<option value="${c}" ${(source?.currency||state.settings.currency||"GHS")===c?"selected":""}>${c}</option>`).join("")}</select></label></div>
+  <div class="two-col"><label>Document type<select id="sDocType" class="input" ${source&&!copyMode?"disabled":""}><option value="estimate" ${(initialType==="estimate"&&!source)||(source&&!copyMode&&sourceKind==="estimate")||copyMode?"selected":""}>Quote / Estimate</option><option value="invoice" ${initialType==="invoice"&&!source?"selected":""} ${source&&!copyMode?"disabled":""}>Sales invoice</option>${sourceKind==="proforma"&&!copyMode?`<option value="proforma" selected>Proforma invoice</option>`:""}</select></label><label>Currency<select id="sCurrency" class="input">${["GHS","USD","EUR","NGN"].map(c=>`<option value="${c}" ${(source?.currency||state.settings.currency||"GHS")===c?"selected":""}>${c}</option>`).join("")}</select></label></div>
   <div class="two-col" style="margin-top:12px"><label>Issue date<input id="sDate" type="date" class="input" value="${esc(source?.date||today())}"></label><label>Due date <span class="muted">(invoice)</span><input id="sDueDate" type="date" class="input" value="${esc(source?.dueDate||addDays(today(),30))}"></label></div>
   <div class="two-col" style="margin-top:12px"><div><label>Customer ${customerSelectHtml(source && !copyMode ? source.customerId : "")}</label></div><div><label>Customer details</label><div id="selectedCustomerInfo" class="selected-customer">Select a customer. Walk-in customers are not used for formal documents.</div></div></div>
-  <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><div class="actions"><button class="btn btn-outline" id="quickAddStock">+ Add item to stock</button><button class="btn btn-outline" id="addLine">+ Add item</button></div></div><div id="saleLines" class="line-items"></div><div id="stockWarning" class="stock-warning hidden"></div></div>
+  <div style="margin-top:15px"><div class="panel-head"><h3>Items</h3><span class="muted">Add a clear description for each quoted item.</span></div><div id="saleLines" class="line-items"></div><div class="line-add-actions"><button type="button" class="btn btn-outline" id="addLine">+ New item</button><button type="button" class="btn btn-outline" id="quickAddStock">+ Add new stock item</button></div><div id="stockWarning" class="stock-warning hidden"></div></div>
   <div class="form-grid" style="margin-top:14px"><label>Discount (%)<input id="sDiscount" type="number" min="0" max="100" step=".01" class="input" value="${source?.subtotal?round2(Number(source.discount||0)/Number(source.subtotal)*100):0}"><small class="muted">Discount amount: <span id="discountPct">${source?.subtotal?round2(Number(source.discount||0)/Number(source.subtotal)*100):0}%</span> of subtotal</small></label><label>Delivery charge<input id="sDelivery" type="number" min="0" step=".01" class="input" value="${source?.deliveryCharge||0}"></label><label>Installation / labour charge<input id="sLabor" type="number" min="0" step=".01" class="input" value="${source?.laborCharge||0}"></label></div>
   <div class="panel" style="margin-top:14px"><label style="display:flex;gap:8px;align-items:center"><input id="sTaxEnabled" type="checkbox" ${(source?.taxEnabled!==false && state.settings.taxEnabled!==false)?"checked":""}> Apply configured taxes</label><div class="muted" id="taxSummary" style="margin-top:5px"></div></div>
+  <label id="sPurposeWrap" style="display:block;margin-top:12px">Comments — what is this quote / proforma about?<textarea id="sPurpose" class="input" rows="3" placeholder="Describe the project, request, or work covered by this proposal.">${esc(source?.purpose||"")}</textarea></label>
   <label style="display:block;margin-top:12px">Document note<textarea id="sNote" class="input" rows="2">${esc(source?.note||state.settings.documentNotes||"")}</textarea></label>
   <div class="sale-total">Total: <span id="saleTotal" style="margin-left:8px">${money(0)}</span></div>
-  </div><aside class="sale-preview"><div class="preview-top"><span>LIVE PREVIEW</span><span class="preview-status" id="previewType">QUOTE</span></div><div class="preview-brand"><img src="${businessLogoSource()}" alt=""><div><strong id="previewCompany">${esc(state.settings.name||"EliteVolt Systems")}</strong><small>Customer document</small></div></div><div class="preview-document"><small id="previewNumber">DRAFT DOCUMENT</small><h3 id="previewTotal">${money(0)}</h3><div class="preview-line"><span>Items</span><strong id="previewItems">0</strong></div><div class="preview-line"><span>Subtotal</span><strong id="previewSubtotal">${money(0)}</strong></div><div class="preview-line"><span>Taxes</span><strong id="previewTaxes">${money(0)}</strong></div><div class="preview-party"><small>BILL TO</small><strong id="previewCustomer">Select a customer</strong><span id="previewDate">${today()}</span></div><div class="preview-lines" id="previewLineItems"><span>No items added</span></div><div class="preview-note">${esc(state.settings.footer||"Thank you for your business.")}</div></div><p class="preview-hint">Your print-ready layout includes line items, tax details, payment terms and business information.</p></aside></div>
+  </div><aside class="sale-preview"><div class="preview-top"><span>LIVE PREVIEW</span><span class="preview-status" id="previewType">QUOTE</span></div><div class="preview-brand"><img src="${businessLogoSource()}" alt=""><div><strong id="previewCompany">${esc(state.settings.name||"EliteVolt Systems")}</strong><small>Customer document</small></div></div><div class="preview-document"><small id="previewNumber">DRAFT DOCUMENT</small><h3 id="previewTotal">${money(0)}</h3><div class="preview-line"><span>Items</span><strong id="previewItems">0</strong></div><div class="preview-line"><span>Subtotal</span><strong id="previewSubtotal">${money(0)}</strong></div><div class="preview-line"><span>Taxes</span><strong id="previewTaxes">${money(0)}</strong></div><div class="preview-party"><small>BILL TO</small><strong id="previewCustomer">Select a customer</strong><span id="previewDate">${today()}</span></div><div id="previewPurpose" class="preview-purpose hidden"></div><div class="preview-lines" id="previewLineItems"><span>No items added</span></div><div class="preview-note">${esc(state.settings.footer||"Thank you for your business.")}</div></div><p class="preview-hint">Your print-ready layout includes line descriptions, tax details, payment terms and business information.</p></aside></div>
   <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveSaleBtn">Save document</button></div>`);
 
   function refreshCustomerInfo(){
@@ -738,39 +826,42 @@ function openSale(sourceId=null, copyMode=false, initialType="estimate"){
   refreshCustomerInfo();
 
   const productOptions=(selected="")=>`<option value="">Select item…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}`;
-  const addLine=(selectedId="", qty=1, linePrice=0, lineId="")=>{
-    const row=document.createElement("div");row.className="product-line";row.dataset.lineId=lineId||uid("line");
-    row.innerHTML=`<select class="input line-product">${productOptions(selectedId)}</select><input class="input line-qty" type="number" min="1" value="${qty}"><input class="input line-price" type="number" min="0" step=".01" value="${linePrice}"><span class="line-sub">${money(0)}</span><button class="icon-btn remove-line" type="button">×</button>`;
+  const addLine=(selectedId="", qty=1, linePrice=0, lineId="", itemDescription="")=>{
+    const row=document.createElement("div");row.className="product-line";row.dataset.lineId=lineId||uid("line");row.dataset.productId=selectedId;
+    const initialProduct=state.products.find(p=>p.id===selectedId),initialDescription=itemDescription||initialProduct?.description||"";
+    row.innerHTML=`<label class="line-field"><span>Item</span><select class="input line-product" aria-label="Product or service">${productOptions(selectedId)}</select></label><label class="line-field"><span>Quantity</span><input class="input line-qty" aria-label="Quantity" type="number" min="1" value="${qty}"></label><label class="line-field"><span>Unit price</span><input class="input line-price" aria-label="Unit price" type="number" min="0" step=".01" value="${linePrice}"></label><div class="line-sub-wrap"><small>Amount</small><span class="line-sub">${money(0)}</span></div><button class="icon-btn remove-line" type="button" aria-label="Remove item">×</button><textarea class="input line-description" rows="2" aria-label="Customer-facing item description" placeholder="Customer-facing description: scope, size, specification, or service included">${esc(initialDescription)}</textarea>`;
     $("#saleLines").appendChild(row);
     const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");
-    const updatePrice=()=>{const p=state.products.find(p=>p.id===sel.value);if(!linePrice) price.value=p?.price||0;updateTotal()};
-    sel.onchange=updatePrice;row.oninput=updateTotal;row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};
+    const description=row.querySelector(".line-description");
+    const updatePrice=()=>{const p=state.products.find(p=>p.id===sel.value),productChanged=row.dataset.productId!==sel.value;if(productChanged||!Number(price.value))price.value=p?.price||0;if(productChanged||!description.value.trim()||description.dataset.autoDescription==="true"){description.value=p?.description||"";description.dataset.autoDescription="true"}row.dataset.productId=sel.value;updateTotal()};
+    sel.onchange=updatePrice;description.oninput=()=>{description.dataset.autoDescription="false";updateTotal()};row.oninput=updateTotal;row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};
     if(selectedId) updatePrice(); else updateTotal();
   };
   const refreshLineOptions=()=>{$$(".line-product").forEach(sel=>{const current=sel.value;sel.innerHTML=productOptions(current);});};
   const updateTotal=()=>{
     const rows=$$(".product-line");
-    const items=rows.map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0})).filter(x=>x.productId&&x.qty>0);
+    const items=rows.map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim()})).filter(x=>x.productId&&x.qty>0);
     rows.forEach(r=>{const q=+r.querySelector('.line-qty').value||0,p=state.products.find(x=>x.id===r.querySelector('.line-product').value);r.querySelector('.line-sub').textContent=money(q*(+r.querySelector('.line-price').value||0));});
     const subtotal=round2(items.reduce((s,x)=>s+x.qty*x.price,0)),discountPercent=Math.min(100,Math.max(0,+$("#sDiscount").value||0)),discount=round2(Math.min(subtotal,subtotal*discountPercent/100)),delivery=+$("#sDelivery").value||0,labor=+$("#sLabor").value||0,base=Math.max(0,subtotal-discount+delivery+labor),tax=$("#sTaxEnabled").checked?taxBreakdown(base,state.settings.taxCategories).reduce((s,x)=>s+x.amount,0):0,currency=$("#sCurrency").value,total=round2(base+tax);
     $("#sDiscount").value=discountPercent; $("#discountPct").textContent=discountPercent.toFixed(2)+"%"; $("#taxSummary").textContent=$("#sTaxEnabled").checked?(taxLabels.length?taxLabels.map(x=>`${esc(x.name)} ${x.rate}%`).join(" + "):"No configured taxes"):"Taxes excluded";
     $("#saleTotal").textContent=money(total,currency);$("#previewTotal").textContent=money(total,currency);$("#previewSubtotal").textContent=money(subtotal,currency);$("#previewTaxes").textContent=money(tax,currency);$("#previewItems").textContent=String(items.reduce((n,x)=>n+x.qty,0));
-    $("#previewType").textContent=$("#sDocType").selectedOptions[0]?.text.toUpperCase()||"QUOTE";$("#previewDate").textContent=`${$("#sDate").value||today()} · Due ${$("#sDueDate").value||"—"}`;
+    $("#previewType").textContent=$("#sDocType").selectedOptions[0]?.text.toUpperCase()||"QUOTE";$("#previewNumber").textContent=source&&!copyMode?`${source.number} · ${effectiveSalesDocStatus(source).toUpperCase()}`:$("#sDocType").value==="invoice"?"DRAFT INVOICE":"DRAFT QUOTATION";$("#previewDate").textContent=`${$("#sDate").value||today()} · Due ${$("#sDueDate").value||"—"}`;
     const customer=state.customers.find(x=>x.id===$("#sCustomer").value);$("#previewCustomer").textContent=customer?.name||"Select a customer";
-    $("#previewLineItems").innerHTML=items.length?items.slice(0,5).map(x=>{const p=state.products.find(y=>y.id===x.productId);return `<div><span>${esc(p?.name||"Item")} <small>× ${x.qty}</small></span><strong>${money(x.qty*x.price,currency)}</strong></div>`}).join("")+(items.length>5?`<small>+ ${items.length-5} more items</small>`:""):`<span>No items added</span>`;
+    $("#previewLineItems").innerHTML=items.length?items.slice(0,5).map(x=>{const p=state.products.find(y=>y.id===x.productId);return `<div><span>${esc(p?.name||"Item")} <small>× ${x.qty}</small>${x.description?`<small class="preview-item-description">${esc(x.description)}</small>`:""}</span><strong>${money(x.qty*x.price,currency)}</strong></div>`}).join("")+(items.length>5?`<small>+ ${items.length-5} more items</small>`:""):`<span>No items added</span>`;
+    const purpose=$("#sPurpose").value.trim();$("#previewPurpose").textContent=purpose;$("#previewPurpose").classList.toggle("hidden",!purpose||$("#sDocType").value==="invoice");$("#sPurposeWrap").classList.toggle("hidden",$("#sDocType").value==="invoice");
     const warnings=stockAvailabilityWarnings(items);
     const box=$("#stockWarning");
     if(warnings.length){box.classList.remove("hidden");box.innerHTML=`<strong>Stock alert</strong><br>${warnings.map(esc).join("<br>")}`}else{box.classList.add("hidden");box.innerHTML=""}
   };
   $("#addLine").onclick=()=>addLine();
   $("#quickAddStock").onclick=()=>openQuickProduct((newId)=>{refreshLineOptions();addLine(newId);});
-  $("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;$("#sTaxEnabled").onchange=updateTotal;$("#sCurrency").onchange=updateTotal;$("#sDate").onchange=updateTotal;$("#sDueDate").onchange=updateTotal;
+  $("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;$("#sPurpose").oninput=updateTotal;$("#sTaxEnabled").onchange=updateTotal;$("#sCurrency").onchange=updateTotal;$("#sDate").onchange=updateTotal;$("#sDueDate").onchange=updateTotal;
   $("#sDocType").onchange=()=>{$("#saveSaleBtn").textContent=$("#sDocType").value==="invoice"?"Create invoice":"Save quote / estimate";updateTotal()};
-  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price,x.lineId));}else addLine();
+  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price,x.lineId,x.description));}else addLine();
 
   $("#saveSaleBtn").onclick=()=>{
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);if(!c)return toast("Select or add a customer before saving the quotation.");
-    const items=$$(".product-line").map(r=>({lineId:r.dataset.lineId,productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,deliveredQty:Number((source?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.deliveredQty||0)})).filter(x=>x.productId&&x.qty>0);
+    const items=$$(".product-line").map(r=>({lineId:r.dataset.lineId,productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim(),deliveredQty:Number((source?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.deliveredQty||0)})).filter(x=>x.productId&&x.qty>0);
     if(!items.length)return toast("Add at least one item and select each item.");
     const warnings=stockAvailabilityWarnings(items, source&&!copyMode?source.id:"");
     if(warnings.length && $("#sDocType").value!=="invoice" && !confirm(`Stock alert:
@@ -781,9 +872,8 @@ Save this quotation anyway?`)) return;
     const subtotal=round2(items.reduce((a,x)=>a+x.qty*x.price,0)),asInvoice=$("#sDocType").value==="invoice";
     if(source&&!copyMode&&asInvoice)return toast("Use the document’s Convert to Invoice action to create a new invoice number.");
     const discountPercent=Math.min(100,Math.max(0,+$("#sDiscount").value||0)),discount=round2(Math.min(subtotal,subtotal*discountPercent/100));
-    const doc={id:source&&!copyMode?source.id:uid(asInvoice?"invoice":"estimate"),number:source&&!copyMode?source.number:nextDocumentNumber(asInvoice?"invoice":sourceKind),date:$("#sDate").value||today(),dueDate:asInvoice?($("#sDueDate").value||addDays(today(),30)):"",validUntil:!asInvoice?addDays($("#sDate").value||today(),Number(state.settings.documentValidityDays||7)):undefined,currency:$("#sCurrency").value||state.settings.currency||"GHS",items,discount,discountPercent,deliveryCharge:round2(+$("#sDelivery").value||0),laborCharge:round2(+$("#sLabor").value||0),paid:0,status:asInvoice?"Draft":"Quotation",delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,note:$("#sNote").value.trim(),taxEnabled:$("#sTaxEnabled").checked,...customerSnapshot(c)};
+    const doc={...(source&&!copyMode?source:{}),id:source&&!copyMode?source.id:uid(asInvoice?"invoice":"estimate"),number:source&&!copyMode?source.number:nextDocumentNumber(asInvoice?"invoice":copyMode?"estimate":sourceKind),date:$("#sDate").value||today(),dueDate:asInvoice?($("#sDueDate").value||addDays(today(),30)):"",validUntil:!asInvoice?addDays($("#sDate").value||today(),Number(state.settings.documentValidityDays||7)):undefined,currency:$("#sCurrency").value||state.settings.currency||"GHS",items,discount,discountPercent,deliveryCharge:round2(+$("#sDelivery").value||0),laborCharge:round2(+$("#sLabor").value||0),paid:0,status:asInvoice?"Draft":(source&&!copyMode?(source.status||"Draft"):"Draft"),delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,purpose:asInvoice?"":$("#sPurpose").value.trim(),note:$("#sNote").value.trim(),taxEnabled:$("#sTaxEnabled").checked,...customerSnapshot(c)};
     recalcDocument(doc);
-    doc.status="Draft";
     if(asInvoice){
       const shortages=stockAvailabilityWarnings(items,source&&!copyMode?source.id:"");
       if(shortages.length)return toast(`Invoice not created. Resolve stock shortages first: ${shortages.join(" ")}`);
@@ -791,7 +881,7 @@ Save this quotation anyway?`)) return;
     mutate(()=>{
       if(asInvoice){deductStockOnInvoice(doc);state.invoices.push(doc);}
       else if(source&&!copyMode){
-        if(sourceKind==="proforma") state.proformas=state.proformas.map(x=>x.id===source.id?{...doc,status:"Proforma"}:x);
+        if(sourceKind==="proforma") state.proformas=state.proformas.map(x=>x.id===source.id?doc:x);
         else state.estimates=state.estimates.map(x=>x.id===source.id?doc:x);
       } else state.estimates.push(doc);
     },asInvoice?"Created sales invoice":source&&!copyMode?"Updated sales document":"Created quotation",doc.number,`${doc.customerName} · ${money(doc.total,doc.currency)}`);
@@ -799,9 +889,9 @@ Save this quotation anyway?`)) return;
   };
 }
 function openQuickProduct(onSaved){
-  const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Item to Stock</h3><button class="close" id="closeQuickProduct">×</button></div><div class="form-grid"><label>Product name<input id="qpName" class="input" placeholder="e.g. Solar Panel 550W"></label><label>Category<input id="qpCat" class="input" value="Solar / Electrical"></label><label>Unit<input id="qpUnit" class="input" value="pcs" placeholder="pcs, box, roll"></label><label>Barcode<input id="qpBarcode" class="input"></label><label>Opening quantity<input id="qpQty" type="number" min="0" class="input" value="0"></label><label>Minimum stock<input id="qpMin" type="number" min="0" class="input" value="2"></label><label>Cost price<input id="qpCost" type="number" min="0" step=".01" class="input" value="0"></label><label>Selling price<input id="qpPrice" type="number" min="0" step=".01" class="input" value="0"></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickProduct">Cancel</button><button class="btn btn-primary" id="saveQuickProduct">Add Item</button></div></div>`;$("#modalCard").appendChild(wrap);
+  const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Item to Stock</h3><button class="close" id="closeQuickProduct">×</button></div><div class="form-grid"><label>Product name<input id="qpName" class="input" placeholder="e.g. Solar Panel 550W"></label><label>Category<input id="qpCat" class="input" value="Solar / Electrical"></label><label class="product-description-field">Customer-facing description<textarea id="qpDescription" class="input" rows="2" placeholder="Key specifications or included service scope"></textarea></label><label>Unit<input id="qpUnit" class="input" value="pcs" placeholder="pcs, box, roll"></label><label>Barcode<input id="qpBarcode" class="input"></label><label>Opening quantity<input id="qpQty" type="number" min="0" class="input" value="0"></label><label>Minimum stock<input id="qpMin" type="number" min="0" class="input" value="2"></label><label>Cost price<input id="qpCost" type="number" min="0" step=".01" class="input" value="0"></label><label>Selling price<input id="qpPrice" type="number" min="0" step=".01" class="input" value="0"></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickProduct">Cancel</button><button class="btn btn-primary" id="saveQuickProduct">Add Item</button></div></div>`;$("#modalCard").appendChild(wrap);
   const close=()=>wrap.remove();$("#closeQuickProduct").onclick=close;$("#cancelQuickProduct").onclick=close;
-  $("#saveQuickProduct").onclick=()=>{const name=$("#qpName").value.trim(),category=$("#qpCat").value.trim();if(!name||!category)return toast("Product name and category are required.");const obj={id:uid("prod"),name,sku:makeSku(category,name),category,unit:$("#qpUnit").value.trim()||"pcs",barcode:$("#qpBarcode").value.trim(),qty:+$("#qpQty").value||0,minQty:+$("#qpMin").value||0,cost:+$("#qpCost").value||0,price:+$("#qpPrice").value||0};mutate(()=>state.products.push(obj),"Created inventory item",obj.sku,obj.name);close();onSaved&&onSaved(obj.id);};
+  $("#saveQuickProduct").onclick=()=>{const name=$("#qpName").value.trim(),category=$("#qpCat").value.trim();if(!name||!category)return toast("Product name and category are required.");const obj={id:uid("prod"),name,description:$("#qpDescription").value.trim(),sku:makeSku(category,name),category,unit:$("#qpUnit").value.trim()||"pcs",barcode:$("#qpBarcode").value.trim(),qty:+$("#qpQty").value||0,minQty:+$("#qpMin").value||0,cost:+$("#qpCost").value||0,price:+$("#qpPrice").value||0};mutate(()=>state.products.push(obj),"Created inventory item",obj.sku,obj.name);close();onSaved&&onSaved(obj.id);};
 }
 function deductDocumentStock(doc){
   if(doc.stockDeductedAtInvoice){doc.items.forEach(x=>x.deliveredQty=Number(x.qty||0));doc.delivered=true;doc.stockDeducted=true;doc.reserved=false;return;}
@@ -818,8 +908,21 @@ function deductStockOnInvoice(doc){
   doc.stockDeducted=true;doc.stockDeductedAtInvoice=true;doc.reserved=false;doc.delivered=false;
 }
 function markInvoiceSent(id){const inv=state.invoices.find(x=>x.id===id);if(!inv||inv.status==="Void")return;mutate(()=>{inv.sentAt=today();inv.status=invoiceBalance(inv)<=0?"Paid":Number(inv.paid||0)>0?"Partially Paid":"Sent"},"Marked invoice as sent",inv.number,inv.customerName||"");toast(`${inv.number} marked as sent.`)}
-function updateSalesDocStatus(type,id,status){const docs=type==="proforma"?state.proformas:state.estimates,doc=docs.find(x=>x.id===id);if(!doc)return;mutate(()=>{doc.status=status;if(status==="Sent")doc.sentAt=today();if(status==="Accepted")doc.acceptedAt=today()},status==="Sent"?"Marked sales document as sent":"Accepted sales document",doc.number,status);toast(`${doc.number} marked ${status.toLowerCase()}.`)}
-function sendDocumentLink(id,channel){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;const subject=`Invoice ${inv.number} from ${state.settings.name}`,body=`Hello ${inv.customerName||""},\n\nPlease find invoice ${inv.number} for ${money(inv.total,inv.currency||state.settings.currency)}. Due date: ${inv.dueDate||"—"}.\n\nThank you, ${state.settings.name}.`;if(channel==="email"){if(!inv.customerEmail)return toast("This customer has no email address. Add one in Customers first.");window.location.href=`mailto:${encodeURIComponent(inv.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`}else{if(!inv.customerPhone)return toast("This customer has no phone number. Add one in Customers first.");const phone=inv.customerPhone.replace(/[^0-9]/g,"");window.open(`https://wa.me/${phone}?text=${encodeURIComponent(body)}`,"_blank","noopener")}}
+function updateSalesDocStatus(type,id,status){const docs=type==="proforma"?state.proformas:state.estimates,doc=docs.find(x=>x.id===id);if(!doc)return;mutate(()=>{doc.status=status;if(status==="Sent")doc.sentAt=today();if(status==="Accepted")doc.acceptedAt=today()},status==="Sent"?"Marked sales document as sent":status==="Approved"?"Approved sales document":"Accepted sales document",doc.number,status);toast(`${doc.number} marked ${status.toLowerCase()}.`)}
+function sendDocumentLink(id,channel){
+  const invoice=state.invoices.find(x=>x.id===id),doc=invoice||findDocument(id);if(!doc)return;
+  const isInvoice=!!invoice,kind=state.proformas.some(x=>x.id===id)?"proforma":"estimate",currency=doc.currency||state.settings.currency;
+  if(channel==="email"&&!doc.customerEmail)return toast("This customer has no email address. Add one in Customers first.");
+  if(channel!=="email"&&!doc.customerPhone)return toast("This customer has no phone number. Add one in Customers first.");
+  if(invoice&&invoice.status==="Void")return toast("A void invoice cannot be sent.");
+  if(!isInvoice&&!['Converted','Expired','Accepted'].includes(effectiveSalesDocStatus(doc))&&effectiveSalesDocStatus(doc)!=="Sent")updateSalesDocStatus(kind,id,"Sent");
+  else if(invoice&&invoice.status==="Draft")markInvoiceSent(invoice.id);
+  const label=isInvoice?"invoice":kind==="proforma"?"proforma invoice":"quotation",subject=`${label[0].toUpperCase()+label.slice(1)} ${doc.number} from ${state.settings.name}`;
+  const dateLine=isInvoice?`Due date: ${doc.dueDate||"—"}.`:doc.validUntil?`Valid until: ${doc.validUntil}.`:"";
+  const body=`Hello ${doc.customerName||""},\n\nPlease find ${label} ${doc.number} for ${money(doc.total,currency)}. ${dateLine}${doc.purpose?`\n\nAbout this proposal: ${doc.purpose}`:""}\n\nThank you, ${state.settings.name}.`;
+  if(channel==="email")window.location.href=`mailto:${encodeURIComponent(doc.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  else{const phone=doc.customerPhone.replace(/[^0-9]/g,"");window.open(`https://wa.me/${phone}?text=${encodeURIComponent(body)}`,"_blank","noopener")}
+}
 function voidInvoice(id){
   const inv=state.invoices.find(x=>x.id===id);if(!inv||inv.status==="Void")return;
   confirmAction({title:`Void invoice ${inv.number}?`,message:"This invoice and its payment history will remain in your records. Any undelivered stock deducted for this invoice will be returned. Enter a reason to continue.",confirmLabel:"Void invoice",reasonLabel:"Reason for voiding",reasonPlaceholder:"Required for your records",onConfirm:reason=>{mutate(()=>{if(inv.stockDeductedAtInvoice&&!inv.delivered){inv.items.forEach(x=>{const p=state.products.find(y=>y.id===x.productId);if(p)p.qty+=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))})}inv.voidedAt=new Date().toISOString();inv.voidReason=reason;inv.status="Void";inv.reserved=false},"Voided invoice",inv.number,reason);toast(`${inv.number} voided. The record is retained.`,"success")}});
@@ -840,7 +943,7 @@ function recordPayment(id){
   $("#savePayment").onclick=()=>{const amount=round2(Math.min(bal,Math.max(0,+$("#payAmount").value||0)));if(amount<=0)return toast("Enter a payment amount.");const method=$("#payMethod").value,date=$("#payDate").value||today();mutate(()=>{inv.paid=round2(Number(inv.paid||0)+amount);inv.status=invoiceBalance(inv)<=0?"Paid":"Partially Paid";inv.reserved=false;const receipt=createReceipt(inv,amount,method,date);state.transactions.push({id:uid("tx"),date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount,reference:inv.number,paymentMethod:method,currency:inv.currency||state.settings.currency,receiptId:receipt.id})},"Recorded invoice payment",inv.number,`${money(amount,inv.currency)} · ${method}`);closeModal();toast("Payment saved and receipt created.")};
 }
 function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv||inv.status==="Void")return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}?`))return;try{mutate(()=>{deductDocumentStock(inv);inv.delivered=true;inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered"},"Confirmed invoice delivery",inv.number,inv.customerName||"");}catch(e){toast(e.message)}}
-function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),dueDate:kind==="invoice"?addDays(today(),30):"",validUntil:kind==="proforma"?addDays(today(),Number(state.settings.documentValidityDays||7)):undefined,currency:source.currency||state.settings.currency||"GHS",paid:kind==="invoice"?round2(paid):0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Partially Paid"):"Sent"):"Draft",delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number,taxEnabled:source.taxEnabled!==false};recalcDocument(inv);return inv}
+function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),dueDate:kind==="invoice"?addDays(today(),30):"",validUntil:kind==="proforma"?addDays(today(),Number(state.settings.documentValidityDays||7)):undefined,currency:source.currency||state.settings.currency||"GHS",paid:kind==="invoice"?round2(paid):0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Partially Paid"):"Draft"):"Draft",delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number,taxEnabled:source.taxEnabled!==false};recalcDocument(inv);return inv}
 function convertToProforma(id){
   const source=state.estimates.find(x=>x.id===id);if(!source)return;
   if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");
@@ -1073,6 +1176,7 @@ function deleteDocument(type,id){
 function printInvoice(id,receipt){const latest=receipt?state.receipts.filter(x=>x.invoiceId===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]:null;return printDocument(id,receipt,latest)}
 function findDocument(id){return state.invoices.find(x=>x.id===id)||state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id)}
 async function waitForPrintAssets(){
+  document.querySelectorAll("#printArea .modern-document").forEach(doc=>{if(!doc.querySelector(".print-logo-watermark"))doc.insertAdjacentHTML("afterbegin",printLogoWatermark())});
   const images=[...document.querySelectorAll("#printArea img")];
   await Promise.all(images.map(img=>new Promise(resolve=>{
     if(img.complete && img.naturalWidth>0){resolve();return}
@@ -1088,16 +1192,17 @@ async function printDocument(id,receipt=false,receiptRecord=null){
   const type=isInvoice?"SALES INVOICE":isEstimate?"QUOTATION / ESTIMATE":"PROFORMA INVOICE";
   const currency=i.currency||s.currency||"GHS",receiptAmount=Number(receiptRecord?.amount??i.paid??0),receiptBalance=Number(receiptRecord?.balanceAfter??invoiceBalance(i));
   const validUntil=i.validUntil || ((!isInvoice) ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
-  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc([p?.category,p?.unit].filter(Boolean).join(" · "))}</small></td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
+  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId),description=x.description||p?.description||[p?.category,p?.unit].filter(Boolean).join(" · ");return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong>${description?`<small class="item-description">${esc(description)}</small>`:""}</td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
   const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
   const taxes=(i.taxEnabled===false||s.taxEnabled===false?[]:(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories))).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount,currency)}</strong></div>`).join("");
-  const paid=Number(i.paid||0),balance=invoiceBalance(i),reserved=!i.delivered&&!i.stockDeducted&&paid>0,status=effectiveInvoiceStatus(i);
-  const printStatus=receipt?(receiptBalance<=0?"PAID":"PAYMENT RECEIVED"):isInvoice?String(status||"DRAFT").toUpperCase():String(i.status||(isEstimate?"ESTIMATE":"PROFORMA")).toUpperCase();
+  const paid=Number(i.paid||0),balance=invoiceBalance(i),reserved=!i.delivered&&!i.stockDeducted&&paid>0,status=isInvoice?effectiveInvoiceStatus(i):effectiveSalesDocStatus(i);
+  const printStatus=receipt?(receiptBalance<=0?"PAID":"PAYMENT RECEIVED"):String(status||"DRAFT").toUpperCase();
   $("#printArea").innerHTML=`<div class="print-document modern-document ${receipt?"receipt-document":""}">
     ${isInvoice&&!receipt&&["Paid","Overdue"].includes(status)?`<div class="print-watermark ${status.toLowerCase()}">${esc(status.toUpperCase())}</div>`:""}
     <div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}" alt="${esc(s.name)}"><div><span class="modern-location">ACCRA · GHANA</span><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · TIN ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(receiptRecord?.number||i.number)}</strong><em class="modern-status">${esc(printStatus)}</em><div class="modern-doc-dates"><span><small>ISSUED</small><strong>${esc(receiptRecord?.date||i.date||"")}</strong></span>${isInvoice&&i.dueDate&&!receipt?`<span><small>DUE DATE</small><strong>${esc(i.dueDate)}</strong></span>`:validUntil?`<span><small>VALID UNTIL</small><strong>${esc(validUntil)}</strong></span>`:""}</div></div></div>
     <div class="modern-accent"></div>
     <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>TIN: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(reserved?"Reserved for delivery":status||"Quotation")}</strong>`}${isInvoice?receipt?`<span>Invoice: ${esc(i.number)}</span><span>Payment method: ${esc(displayPaymentMethod(receiptRecord?.paymentMethod))}</span><span>Amount received: ${money(receiptAmount,currency)}</span><span>Balance after payment: ${money(receiptBalance,currency)}</span>`:`<span>Amount paid: ${money(paid,currency)}</span><span>Balance due: ${money(balance,currency)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
+    ${!receipt&&i.purpose?`<div class="document-purpose"><strong>PROPOSAL / PROJECT SUMMARY</strong><p>${esc(i.purpose)}</p></div>`:""}
     <table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th>SKU</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6">No line items</td></tr>`}</tbody></table>
     <div class="modern-summary"><div class="modern-terms">${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}${s.salesContract?`<div class="print-note"><strong>Sales terms</strong><div>${esc(s.salesContract)}</div></div>`:""}${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}${s.bankDetails?`<div class="print-note"><strong>Payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(i.subtotal,currency)}</strong></div><div><span>Discount</span><strong>− ${money(i.discount,currency)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery</span><strong>${money(i.deliveryCharge,currency)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge,currency)}</strong></div>`:""}${taxes}<div class="grand"><span>${receipt?"AMOUNT RECEIVED":"TOTAL DUE"}</span><strong>${money(receipt?receiptAmount:i.total,currency)}</strong></div>${isInvoice&&!receipt?`<div class="balance-row"><span>Amount paid</span><strong>${money(paid,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div>
     <div class="print-sign"><div>Prepared by <span></span></div><div>Customer acknowledgement <span></span></div></div>
@@ -1125,9 +1230,10 @@ async function printWaybill(id){
 
 
 $("#connectDriveBtn").onclick=connectDrive;
+window.addEventListener("online",()=>{if(driveReady){setDriveStatus("Sync pending…",true);retryDriveSync(true)}});
 $("#setLogoFile").onchange=()=>{const file=$("#setLogoFile").files?.[0];if(!file)return;if(!["image/png","image/jpeg","image/webp"].includes(file.type)||file.size>1024*1024){toast("Choose a PNG, JPG or WebP image up to 1 MB.");$("#setLogoFile").value="";return}const reader=new FileReader();reader.onload=()=>{const data=String(reader.result||"");mutate(()=>state.settings.logoData=data,"Updated business logo",file.name,"Logo embedded in the Drive workspace");toast("Business logo saved.")};reader.readAsDataURL(file)};
-$("#syncBtn").onclick=()=>saveToDrive();
-$("#signOutBtn").onclick=()=>{const t=gapi.client.getToken();if(t)google.accounts.oauth2.revoke(t.access_token);gapi.client.setToken("");driveReady=false;driveFileId=null;driveFolderId=null;setDriveStatus("Offline");showAuth()};
+$("#syncBtn").onclick=()=>retryDriveSync();
+$("#signOutBtn").onclick=()=>{const t=gapi.client.getToken();if(t)google.accounts.oauth2.revoke(t.access_token);gapi.client.setToken("");driveReady=false;driveWorkspaceLoaded=false;driveFileId=null;driveFolderId=null;setDriveStatus("Offline");showAuth()};
 $$("[data-open-product]").forEach(b=>b.onclick=()=>openProduct());
 $$("[data-open-sale]").forEach(b=>b.onclick=()=>openSale());
 $$('[data-open-invoice]').forEach(b=>b.onclick=()=>openSale(null,false,"invoice"));
@@ -1138,7 +1244,7 @@ $("#exportCustomersBtn").onclick=exportCustomersCSV;$("#importCustomersBtn").onc
 $("#exportReportsBtn").onclick=exportReportsCSV;$("#exportAuditBtn").onclick=exportAuditCSV;$("#applyReportRange").onclick=renderAll;
 $("#loadDemoDataBtn").onclick=loadDemoData;
 $("#reportFrom").value=`${new Date().getFullYear()}-01-01`;$("#reportTo").value=today();
-$("#manualBackupBtn").onclick=()=>saveToDrive();
+$("#manualBackupBtn").onclick=()=>retryDriveSync();
 $("#printReportBtn").onclick=()=>{
   const s=state.settings,currency=s.currency||"GHS",from=$("#reportFrom").value||"0000-01-01",to=$("#reportTo").value||today(),invoices=state.invoices.filter(i=>!i.deletedAt&&!i.voidedAt&&i.status!=="Void"&&i.date>=from&&i.date<=to&&(i.currency||currency)===currency),expenses=state.expenses.filter(x=>!x.deletedAt&&x.date>=from&&x.date<=to&&(x.currency||currency)===currency),purchases=state.purchaseInvoices.filter(x=>!x.deletedAt&&x.date>=from&&x.date<=to&&(x.currency||currency)===currency),sales=invoices.reduce((n,x)=>n+Number(x.total||0),0),paid=invoices.reduce((n,x)=>n+Number(x.paid||0),0),expenseTotal=expenses.reduce((n,x)=>n+Number(x.amount||0),0),purchaseTotal=purchases.reduce((n,x)=>n+Number(x.total||0),0),rows=[...invoices.map(x=>`<tr><td>${esc(x.date||"")}</td><td>Sales invoice</td><td>${esc(x.number)}</td><td>${esc(x.customerName||"")}</td><td>${esc(effectiveInvoiceStatus(x))}</td><td class="num">${money(x.total,currency)}</td></tr>`),...purchases.map(x=>`<tr><td>${esc(x.date||"")}</td><td>Supplier invoice</td><td>${esc(x.number)}</td><td>${esc(x.supplierName||"")}</td><td>${esc(x.status||"")}</td><td class="num">${money(x.total,currency)}</td></tr>`),...expenses.map(x=>`<tr><td>${esc(x.date||"")}</td><td>Expense · ${esc(x.category||"")}</td><td>${esc(x.reference||"")}</td><td>${esc(x.vendor||"")}</td><td>Recorded</td><td class="num">${money(x.amount,currency)}</td></tr>`)].join("");
   $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>BUSINESS REPORT</span><strong>${esc(currency)}</strong><small>${esc(from)} — ${esc(to)}</small></div></div><div class="modern-accent"></div><div class="print-meta"><div class="print-box"><strong>Sales</strong>Invoice total: ${money(sales,currency)}<br>Payments received: ${money(paid,currency)}<br>Invoice balances: ${money(invoices.reduce((n,x)=>n+invoiceBalance(x),0),currency)}</div><div class="print-box"><strong>Purchases & expenses</strong>Supplier invoices: ${money(purchaseTotal,currency)}<br>Operating expenses: ${money(expenseTotal,currency)}<br>Stock value today: ${money(stockValue(),currency)}</div></div><table class="print-table modern-table"><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Party</th><th>Status</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6">No activity for this period.</td></tr>`}</tbody></table><div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · Generated ${today()}</span></div></div>`;
