@@ -1,43 +1,31 @@
-# EliteVolt Systems Business Manager
+# EVS-Flow track — Business invoicing & operations
 
-A browser-based stock, sales-document, invoicing and cash-flow manager for EliteVolt Systems.
+EVS-Flow is a browser-based workspace for EliteVolt Systems in Ghana. It combines a sales dashboard, inventory, customer and supplier records, purchasing, delivery waybills, receipts, credit notes, expenses, cash flow, reports, and print-ready business documents.
 
-## Features
-- Google Drive storage using the supplied OAuth client ID and `drive.file` scope.
-- Automatic SKU generation for new stock items.
-- Customer records with contact person, billing address, shipping address, tax ID and notes.
-- Sales documents: Estimates/Quotations, Proforma Invoices and Sales Invoices.
-- Supplier directory, purchase orders and purchase invoices with payment tracking.
-- Partial goods receiving from supplier invoices or purchase orders, with inventory and weighted-average unit cost updates.
-- Outgoing delivery waybills and incoming goods-received notes created from sales invoices, purchase documents, or from scratch.
-- Partial dispatch/receiving on waybills, with linked invoice and inventory status updates.
-- Unique document IDs/numbers linked to the selected customer.
-- Stock is **not deducted** when an estimate, proforma or unpaid invoice is created.
-- Stock is deducted when an invoice receives payment/part-payment or when delivery is explicitly confirmed.
-- Payment recording on invoices; part-payments update invoice status and cash flow.
-- Estimate/proforma conversion to invoice after payment or part-payment.
-- Modern A4 print layouts for quotes/estimates, proformas, sales invoices, supplier documents and waybills, with company branding, party details, line items, totals, terms and signature fields.
-- Printing no longer forces a blank A4 page before/after a document.
-- Settings for company details, registration number, tax/VAT number, tax categories, default tax rate, payment terms, sales contract/terms, document notes, bank/payment details and footer text.
-- Cash-flow charts and reporting.
+## Current capabilities
 
-## Deployment
-Upload the contents to a static host such as Vercel. Add the deployed origin to the Google OAuth client's Authorized JavaScript origins and enable the Google Drive API in the associated Google Cloud project.
+- Google sign-in and Google Drive JSON storage using the project's existing OAuth client, `drive.file` scope, Drive folder, and data-file identifiers.
+- Dashboard with monthly revenue, outstanding receivables, overdue invoice and low-stock counts, 30-day revenue, top products, payment methods, recent invoices, and low-stock alerts.
+- Quote/estimate and proforma lifecycle (draft, sent, accepted, expired), direct sales invoice, and conversion to invoice. Invoice creation validates and deducts stock; waybill dispatch records delivery without deducting those same units twice.
+- Invoice balances, partial payments, automatic receipts, overdue status, credit notes, reason-required invoice voiding, and retained financial history.
+- Sales invoice email and WhatsApp draft links, duplicate-as-quote, live document preview, branded print layouts, and browser Print / Save as PDF.
+- Purchase orders, supplier invoices, partial goods receiving, supplier payments, weighted-average item costs, purchase-to-waybill conversion, and standalone waybills / goods-received notes.
+- Ghana tax defaults (NHIL 2.5%, GETFund 2.5%, VAT 12.5%) with editable tax categories, and document currency selection for GHS, USD, EUR, and NGN.
+- Customer statements, CSV import/export, supplier history, stock adjustments, expenses with small receipt attachments, searchable audit history, report filters, CSV export for Excel, and print-to-PDF reports.
+- Global workspace search (Ctrl/Cmd+K), plus searchable, sortable and paginated data tables.
+- Ghana demo data available from Settings, including Accra customers such as Kwame Enterprises.
 
-## Sales / ERP workflow update
-- New sales begin as Quotations.
-- Quotations can be converted to Proforma Invoices or Sales Invoices.
-- Formal sales documents require a saved customer; walk-in customers are not used for new documents.
-- Delivery and installation/labour charges can be entered per document.
-- Configured tax categories are automatically applied together and printed separately (for example VAT 15%, NHIL 2.5%, GETFund 2.5%).
-- Payments do not deduct physical stock. A paid or part-paid invoice reserves the ordered quantities until delivery is confirmed.
-- Confirming delivery is the stock-reduction event.
-- Stock screens show on-hand, reserved and available quantities, and invoice creation checks available quantities before reserving stock.
+## Run and deploy
 
-## Purchasing and waybill workflow
-- Create supplier purchase orders, then record purchase invoices against those orders or directly from a supplier bill.
-- Purchase invoice payments appear as cash-out transactions. Receiving stock is a separate action and supports partial deliveries.
-- Receiving updates on-hand quantity and weighted-average item cost. A purchase document can also be converted into an incoming waybill.
-- Sales invoices can be converted into outgoing waybills. Completing a waybill updates delivered quantities and deducts stock; partial deliveries remain tracked on the invoice.
-- Standalone waybills support manual movements when there is no linked invoice or purchase document.
-- New document collections are added to the existing Drive JSON data file. Existing records and the Google Drive sign-in configuration remain compatible.
+This repository is a static HTML/CSS/JavaScript application. Open `index.html` through a local static server or deploy the files to a static host. Google sign-in and Charts load from their existing Google/CDN services, so a network connection is required. Add the deployed origin to the existing OAuth client's authorized JavaScript origins and ensure the Google Drive API is enabled in that Google Cloud project.
+
+The app continues to store the business workspace as a JSON file in Google Drive; existing Drive data remains readable and new collections are migrated with defaults when loaded. Back up the Drive data file before importing bulk records or starting live operations.
+
+## Operational notes
+
+- Invoice stock is deducted when the invoice is created. An outgoing waybill tracks delivery and does not subtract those units again. Voiding an invoice requires a reason; any undelivered quantity deducted at invoice creation is returned.
+- Purchase invoice payment and receipt of goods are tracked separately. Partial receipt updates quantities and weighted-average cost.
+- Currency totals are not exchanged or consolidated. Dashboard and summary figures use the selected default currency; document records retain their own currency.
+- Team-role controls are a UI preview only. This static Drive-backed build has no server-side authorization, database policies, or multi-user audit identity enforcement.
+- Printable documents use the browser's print dialog. The current app does not provide server-generated PDFs or a public QR verification service.
+- This build preserves the existing Google authentication and Drive wiring. It is not a Next.js/Supabase replatform; production multi-user deployment, secure role enforcement, and public document verification require a backend.

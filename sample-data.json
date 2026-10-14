@@ -1,38 +1,52 @@
 {
-  "version": 1,
+  "version": 4,
   "products": [
-    {
-      "id": "prod_demo_1",
-      "name": "Solar Panel 550W",
-      "sku": "PV-550",
-      "category": "Solar Panels",
-      "qty": 12,
-      "minQty": 3,
-      "cost": 850,
-      "price": 1150
-    },
-    {
-      "id": "prod_demo_2",
-      "name": "Deye 6kW Hybrid Inverter",
-      "sku": "INV-6K",
-      "category": "Inverters",
-      "qty": 3,
-      "minQty": 1,
-      "cost": 14500,
-      "price": 17500
-    }
+    {"id":"demo-prod-panel-550","name":"Solar Panel 550W Mono PERC","sku":"PV-550","category":"Solar Panels","unit":"pcs","qty":28,"minQty":6,"cost":850,"price":1150,"barcode":"EVS-PV550"},
+    {"id":"demo-prod-inverter-6k","name":"Deye 6kW Hybrid Inverter","sku":"INV-6K-DEYE","category":"Inverters","unit":"pcs","qty":8,"minQty":3,"cost":14500,"price":17500,"barcode":"EVS-INV6K"},
+    {"id":"demo-prod-battery-5k","name":"Lithium Battery 5.12kWh","sku":"BAT-5K-LFP","category":"Batteries","unit":"pcs","qty":14,"minQty":4,"cost":9100,"price":11950,"barcode":"EVS-BAT512"},
+    {"id":"demo-prod-cable","name":"Solar DC Cable 6mm (100m roll)","sku":"CAB-6MM-100","category":"Cables & Protection","unit":"roll","qty":3,"minQty":5,"cost":740,"price":980,"barcode":"EVS-CAB6100"},
+    {"id":"demo-prod-mount","name":"Roof Mounting Rail Kit","sku":"MNT-RAIL-KIT","category":"Mounting Systems","unit":"set","qty":16,"minQty":5,"cost":520,"price":760,"barcode":"EVS-MNTRAIL"}
   ],
-  "customers": [],
-  "invoices": [],
-  "transactions": [],
-  "settings": {
-    "name": "EliteVolt Systems",
-    "phone": "",
-    "email": "",
-    "address": "",
-    "tax": "",
-    "prefix": "EVS",
-    "currency": "GH\u20b5",
-    "footer": "Thank you for doing business with EliteVolt Systems."
-  }
+  "customers": [
+    {"id":"demo-cust-kwame","name":"Kwame Enterprises Ltd","contactPerson":"Kwame Mensah","phone":"+233 24 555 0184","email":"accounts@kwame-enterprises.example","taxId":"C0008123456","billingAddress":"Plot 18, Spintex Road, Accra","shippingAddress":"Community 18, Tema","creditLimit":25000,"notes":"Solar installation and maintenance client."},
+    {"id":"demo-cust-nana","name":"Nana Osei Retail","contactPerson":"Nana Osei","phone":"+233 20 443 2187","email":"nana.osei@example","taxId":"C0007234102","billingAddress":"Oxford Street, Osu, Accra","shippingAddress":"East Legon, Accra","creditLimit":12000,"notes":"Retail showroom customer."},
+    {"id":"demo-cust-adom","name":"Adom Energy Services","contactPerson":"Akosua Boateng","phone":"+233 55 718 2240","email":"procurement@adom-energy.example","taxId":"C0009341587","billingAddress":"Kumasi Central, Ashanti Region","shippingAddress":"Kumasi, Ashanti Region","creditLimit":40000,"notes":"Commercial and community energy projects."}
+  ],
+  "suppliers": [
+    {"id":"demo-supplier-suntrade","name":"Suntrade West Africa Ltd","contactPerson":"Joseph Asare","phone":"+233 30 298 7712","email":"sales@suntrade.example","address":"North Industrial Area, Accra","taxId":"P0004127890","supplies":"Panels, inverters and mounting systems"},
+    {"id":"demo-supplier-powercell","name":"PowerCell Ghana","contactPerson":"Esi Owusu","phone":"+233 24 901 1180","email":"orders@powercell.example","address":"Ahodwo, Kumasi","taxId":"P0005510234","supplies":"Lithium and lead-acid batteries"}
+  ],
+  "invoices": [
+    {"id":"demo-inv-kwame","number":"INV-2026-0001","date":"2026-10-08","dueDate":"2026-11-07","currency":"GHS","status":"Sent","paid":5000,"subtotal":11500,"discount":0,"discountPercent":0,"deliveryCharge":250,"laborCharge":0,"taxBase":11750,"taxLines":[{"name":"NHIL","rate":2.5,"amount":293.75},{"name":"GETFund","rate":2.5,"amount":293.75},{"name":"VAT","rate":12.5,"amount":1468.75}],"taxTotal":2056.25,"total":13806.25,"taxEnabled":true,"items":[{"lineId":"demo-l1","productId":"demo-prod-panel-550","qty":10,"price":1150,"deliveredQty":0}],"customerId":"demo-cust-kwame","customerName":"Kwame Enterprises Ltd","customerContactPerson":"Kwame Mensah","customerPhone":"+233 24 555 0184","customerEmail":"accounts@kwame-enterprises.example","customerBillingAddress":"Plot 18, Spintex Road, Accra","customerShippingAddress":"Community 18, Tema","customerTaxId":"C0008123456","stockDeducted":true,"stockDeductedAtInvoice":true,"delivered":false,"reserved":false,"note":"Supply and installation of rooftop solar equipment.","sourceDocumentNumber":"QUO-2026-0001"},
+    {"id":"demo-inv-nana","number":"INV-2026-0002","date":"2026-10-12","dueDate":"2026-10-27","currency":"GHS","status":"Partially Paid","paid":3500,"subtotal":11950,"discount":0,"discountPercent":0,"deliveryCharge":0,"laborCharge":0,"taxBase":11950,"taxLines":[{"name":"NHIL","rate":2.5,"amount":298.75},{"name":"GETFund","rate":2.5,"amount":298.75},{"name":"VAT","rate":12.5,"amount":1493.75}],"taxTotal":2091.25,"total":14041.25,"taxEnabled":true,"items":[{"lineId":"demo-l3","productId":"demo-prod-battery-5k","qty":1,"price":11950,"deliveredQty":0}],"customerId":"demo-cust-nana","customerName":"Nana Osei Retail","customerContactPerson":"Nana Osei","customerPhone":"+233 20 443 2187","customerEmail":"nana.osei@example","customerBillingAddress":"Oxford Street, Osu, Accra","customerShippingAddress":"East Legon, Accra","customerTaxId":"C0007234102","stockDeducted":true,"stockDeductedAtInvoice":true,"delivered":false,"reserved":false,"note":"Payment by mobile money accepted."}
+  ],
+  "estimates": [
+    {"id":"demo-quote-adom","number":"QUO-2026-0001","date":"2026-10-14","validUntil":"2026-10-28","currency":"GHS","status":"Quotation","paid":0,"subtotal":35000,"discount":700,"discountPercent":2,"deliveryCharge":500,"laborCharge":1200,"taxBase":36000,"taxLines":[{"name":"NHIL","rate":2.5,"amount":900},{"name":"GETFund","rate":2.5,"amount":900},{"name":"VAT","rate":12.5,"amount":4500}],"taxTotal":6300,"total":42300,"taxEnabled":true,"items":[{"lineId":"demo-l4","productId":"demo-prod-inverter-6k","qty":2,"price":17500,"deliveredQty":0}],"customerId":"demo-cust-adom","customerName":"Adom Energy Services","customerContactPerson":"Akosua Boateng","customerPhone":"+233 55 718 2240","customerEmail":"procurement@adom-energy.example","customerBillingAddress":"Kumasi Central, Ashanti Region","customerShippingAddress":"Kumasi, Ashanti Region","customerTaxId":"C0009341587","note":"Quote valid for 14 days. Includes delivery and commissioning."}
+  ],
+  "proformas": [],
+  "purchaseOrders": [
+    {"id":"demo-po-1","number":"PO-2026-0001","date":"2026-10-09","currency":"GHS","status":"Partially received","total":17000,"paid":0,"items":[{"lineId":"demo-pl1","productId":"demo-prod-panel-550","qty":20,"cost":850,"receivedQty":8},{"lineId":"demo-pl2","productId":"demo-prod-mount","qty":15,"cost":520,"receivedQty":0}],"supplierId":"demo-supplier-suntrade","supplierName":"Suntrade West Africa Ltd","supplierContactPerson":"Joseph Asare","supplierPhone":"+233 30 298 7712","supplierEmail":"sales@suntrade.example","supplierAddress":"North Industrial Area, Accra","reference":"STW-PO-8842"}
+  ],
+  "purchaseInvoices": [
+    {"id":"demo-pin-1","number":"PIN-2026-0001","date":"2026-10-10","dueDate":"2026-11-09","currency":"GHS","reference":"PCG-INV-2148","status":"Part-paid","paid":2000,"subtotal":9100,"discount":0,"otherCharges":0,"tax":0,"total":9100,"items":[{"lineId":"demo-pil1","productId":"demo-prod-battery-5k","qty":1,"cost":9100,"receivedQty":1}],"supplierId":"demo-supplier-powercell","supplierName":"PowerCell Ghana","supplierContactPerson":"Esi Owusu","supplierPhone":"+233 24 901 1180","supplierEmail":"orders@powercell.example","supplierAddress":"Ahodwo, Kumasi","received":true,"receiptStatus":"Received"}
+  ],
+  "waybills": [
+    {"id":"demo-wb-1","number":"WB-2026-0001","date":"2026-10-13","direction":"outgoing","partyName":"Nana Osei Retail","sourceType":"invoice","sourceId":"demo-inv-nana","sourceNumber":"INV-2026-0002","items":[{"productId":"demo-prod-battery-5k","qty":1,"handledQty":0,"sourceItemId":"demo-l3"}],"status":"Prepared","carrier":"EVS delivery team","reference":"EVS-VAN-02","note":"Deliver to East Legon, Accra."}
+  ],
+  "receipts": [
+    {"id":"demo-rec-1","number":"REC-2026-0001","date":"2026-10-08","invoiceId":"demo-inv-kwame","invoiceNumber":"INV-2026-0001","customerName":"Kwame Enterprises Ltd","amount":5000,"balanceAfter":8806.25,"paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-rec-2","number":"REC-2026-0002","date":"2026-10-12","invoiceId":"demo-inv-nana","invoiceNumber":"INV-2026-0002","customerName":"Nana Osei Retail","amount":3500,"balanceAfter":10541.25,"paymentMethod":"Bank Transfer","currency":"GHS"}
+  ],
+  "creditNotes": [],
+  "expenses": [
+    {"id":"demo-exp-1","number":"EXP-2026-0001","date":"2026-10-03","category":"Transport","vendor":"Accra Logistics","amount":480,"currency":"GHS","paymentMethod":"Mobile Money — MTN","reference":"AL-0428","description":"Local delivery fuel and dispatch."},
+    {"id":"demo-exp-2","number":"EXP-2026-0002","date":"2026-10-07","category":"Utilities","vendor":"Electricity Company of Ghana","amount":1260,"currency":"GHS","paymentMethod":"Bank Transfer","reference":"ECG-1007","description":"Workshop electricity bill."}
+  ],
+  "transactions": [
+    {"id":"demo-tx-1","date":"2026-10-08","type":"in","category":"Sales","description":"Payment for INV-2026-0001","amount":5000,"reference":"INV-2026-0001","paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-tx-2","date":"2026-10-12","type":"in","category":"Sales","description":"Payment for INV-2026-0002","amount":3500,"reference":"INV-2026-0002","paymentMethod":"Bank Transfer","currency":"GHS"},
+    {"id":"demo-tx-3","date":"2026-10-03","type":"out","category":"Transport","description":"Accra Logistics — Local delivery fuel and dispatch.","amount":480,"reference":"AL-0428","paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-tx-4","date":"2026-10-07","type":"out","category":"Utilities","description":"Electricity Company of Ghana — Workshop electricity bill.","amount":1260,"reference":"ECG-1007","paymentMethod":"Bank Transfer","currency":"GHS"}
+  ],
+  "settings": {"name":"EliteVolt Systems","phone":"+233 30 290 4750","email":"accounts@elitevolt.example","address":"Spintex Road, Accra, Greater Accra Region","tax":"C0007894561","prefix":"EVS","currency":"GHS","footer":"Thank you for powering Ghana with cleaner energy.","companyReg":"CS123456789","taxCategories":"NHIL 2.5%, GETFund 2.5%, VAT 12.5%","defaultTaxRate":0,"salesContract":"Equipment supply is subject to the stated warranty and delivery terms.","documentNotes":"","paymentTerms":"Payment due by the invoice due date. Mobile money and bank transfer accepted.","bankDetails":"GCB Bank · EliteVolt Systems · Account ending 8842\nMTN MoMo: 024 000 0000","documentValidityDays":14,"taxEnabled":true,"role":"Super Admin"}
 }

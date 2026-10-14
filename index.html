@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#0b2037">
-  <meta name="description" content="EliteVolt Systems - stock, sales, invoicing and cash-flow management">
-  <title>EliteVolt Systems | Business Manager</title>
+  <meta name="description" content="EVS-Flow track — professional business invoicing and operations management for Ghana.">
+  <title>EVS-Flow track | EliteVolt Systems</title>
   <link rel="icon" type="image/png" href="assets/elitevolt-logo.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -39,6 +39,7 @@
         </div>
       </div>
       <div class="top-actions">
+        <button id="globalSearchBtn" class="global-search-trigger" type="button" aria-label="Search everything">⌕ <span>Search anything…</span><kbd>⌘ K</kbd></button>
         <span id="driveStatus" class="drive-pill">Drive: Offline</span>
         <button id="syncBtn" class="btn btn-outline">Sync</button>
         <button id="signOutBtn" class="btn btn-ghost">Sign out</button>
@@ -47,37 +48,45 @@
 
     <div class="layout">
       <aside class="sidebar" id="sidebar">
+        <div class="nav-caption">WORKSPACE</div>
         <button class="nav-item active" data-view="dashboard">⌂ <span>Dashboard</span></button>
-        <button class="nav-item" data-view="stock">▣ <span>Stock</span></button>
-        <button class="nav-item" data-view="sales">▤ <span>Sales & Invoices</span></button>
+        <button class="nav-item" data-view="sales">▤ <span>Sales documents</span></button>
+        <button class="nav-item" data-view="stock">▣ <span>Inventory</span></button>
         <button class="nav-item" data-view="purchases">▧ <span>Purchases</span></button>
         <button class="nav-item" data-view="waybills">⇄ <span>Waybills</span></button>
-        <button class="nav-item" data-view="cashflow">◫ <span>Cash Flow</span></button>
-        <button class="nav-item" data-view="customers">♙ <span>Customers</span></button>
+        <div class="nav-caption">MONEY & PEOPLE</div>
+        <button class="nav-item" data-view="cashflow">◫ <span>Payments & cash</span></button>
+        <button class="nav-item" data-view="expenses">− <span>Expenses</span></button>
+        <button class="nav-item" data-view="financeDocs">▧ <span>Receipts & credits</span></button>
+        <button class="nav-item" data-view="customers">♙ <span>Customers & CRM</span></button>
+        <div class="nav-caption">INSIGHTS & ADMIN</div>
         <button class="nav-item" data-view="reports">▥ <span>Reports</span></button>
+        <button class="nav-item" data-view="audit">◷ <span>Audit log</span></button>
         <button class="nav-item" data-view="settings">⚙ <span>Settings</span></button>
       </aside>
 
       <main class="content">
         <section id="dashboard" class="view active">
           <div class="page-head">
-            <div><h2>Dashboard</h2><p>Monitor stock, sales, purchasing and cash flow at a glance.</p></div>
-            <div class="head-actions"><button class="btn btn-primary" data-open-sale>Create Quote / Estimate</button><button class="btn btn-outline" data-open-product>+ Add Stock</button></div>
+            <div><div class="eyebrow">ELITEVOLT SYSTEMS · GHANA</div><h2>Business overview</h2><p>Your sales, receivables and stock position at a glance.</p></div>
+            <div class="head-actions"><button class="btn btn-outline" data-open-sale>New quotation</button><button class="btn btn-primary" data-open-invoice>+ Create invoice</button></div>
           </div>
-          <div class="cards four">
-            <div class="metric"><span>Total stock value</span><strong id="mStock">GH₵ 0.00</strong><small id="mStockUnits">0 units</small></div>
-            <div class="metric"><span>Sales this month</span><strong id="mSales">GH₵ 0.00</strong><small id="mInvoices">0 invoices</small></div>
-            <div class="metric"><span>Cash in</span><strong id="mCashIn">GH₵ 0.00</strong><small>This month</small></div>
-            <div class="metric"><span>Cash out</span><strong id="mCashOut">GH₵ 0.00</strong><small>This month</small></div>
-          </div>
-          <div class="grid two">
-            <div class="panel"><div class="panel-head"><h3>Cash-flow trend</h3><span id="trendLabel">Last 6 months</span></div><canvas id="cashChart"></canvas></div>
-            <div class="panel"><div class="panel-head"><h3>Sales by category</h3></div><canvas id="categoryChart"></canvas></div>
+          <div class="cards five">
+            <div class="metric metric-accent"><span>Total revenue <small>this month</small></span><strong id="mRevenue">GH₵ 0.00</strong><small id="mRevenueTrend">Invoices issued</small></div>
+            <div class="metric"><span>Outstanding</span><strong id="mOutstanding">GH₵ 0.00</strong><small>Open invoice balances</small></div>
+            <div class="metric"><span>Overdue invoices</span><strong id="mOverdue">0</strong><small id="mOverdueValue">GH₵ 0.00 overdue</small></div>
+            <div class="metric"><span>Low stock alerts</span><strong id="mLowStock">0</strong><small>At or below reorder point</small></div>
+            <div class="metric"><span>Total customers</span><strong id="mCustomers">0</strong><small>Active customer records</small></div>
           </div>
           <div class="grid two">
-            <div class="panel"><div class="panel-head"><h3>Low-stock items</h3><button class="link-btn" data-view-link="stock">View stock</button></div><div id="lowStockList" class="list"></div></div>
-            <div class="panel"><div class="panel-head"><h3>Recent sales</h3><button class="link-btn" data-view-link="sales">View all</button></div><div id="recentSalesList" class="list"></div></div>
+            <div class="panel"><div class="panel-head"><div><h3>Revenue trend</h3><small class="muted">Last 30 days · <span id="trendLabel">GHS</span></small></div><button class="link-btn" data-view-link="reports">View report</button></div><canvas id="revenue30Chart"></canvas></div>
+            <div class="panel"><div class="panel-head"><div><h3>Sales by product</h3><small class="muted">Top 5 · this month</small></div></div><canvas id="productSalesChart"></canvas></div>
           </div>
+          <div class="grid two">
+            <div class="panel"><div class="panel-head"><div><h3>Payment methods</h3><small class="muted">Payments received this month</small></div></div><canvas id="paymentChart"></canvas></div>
+            <div class="panel"><div class="panel-head"><h3>Low stock</h3><button class="link-btn" data-view-link="stock">Manage inventory</button></div><div id="lowStockList" class="list"></div></div>
+          </div>
+          <div class="panel"><div class="panel-head"><div><h3>Recent invoices</h3><small class="muted">Latest customer billing activity</small></div><button class="link-btn" data-view-link="sales">All sales documents</button></div><div class="table-wrap embedded-table"><table><thead><tr><th>Invoice</th><th>Customer</th><th>Issue date</th><th>Due date</th><th>Total</th><th>Balance</th><th>Status</th></tr></thead><tbody id="recentInvoicesTable"></tbody></table></div></div>
         </section>
 
         <section id="stock" class="view">
@@ -87,8 +96,8 @@
         </section>
 
         <section id="sales" class="view">
-          <div class="page-head"><div><h2>Sales Documents</h2><p>Create polished quotations, estimates and invoices, then print or convert them into delivery waybills.</p></div><button class="btn btn-primary" data-open-sale>Create Quote / Estimate</button></div>
-          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotes / Estimates</option><option value="Proforma Invoice">Proforma invoices</option><option value="Reserved / Awaiting delivery">Reserved / Awaiting delivery</option><option value="Paid">Paid</option><option value="Part-paid">Part-paid</option><option value="Unpaid">Unpaid</option></select></div>
+          <div class="page-head"><div><h2>Sales documents</h2><p>Create branded quotations, proformas and invoices, then print or convert them into delivery waybills.</p></div><div class="head-actions"><button class="btn btn-outline" data-open-sale>New quote / estimate</button><button class="btn btn-primary" data-open-invoice>+ New invoice</button></div></div>
+          <div class="toolbar"><input id="salesSearch" class="input" placeholder="Search document or customer…"><select id="salesStatus" class="input"><option value="">All documents</option><option value="Invoice">Invoices</option><option value="Estimate">Quotes / Estimates</option><option value="Proforma Invoice">Proforma invoices</option><option value="Draft">Draft</option><option value="Sent">Sent</option><option value="Accepted">Accepted</option><option value="Expired">Expired</option><option value="Overdue">Overdue</option><option value="Paid">Paid</option><option value="Credited">Credited</option><option value="Partially Paid">Partially Paid</option><option value="Void">Void</option></select></div>
           <div class="table-wrap"><table><thead><tr><th>Document</th><th>Date</th><th>Customer</th><th>Total</th><th>Paid</th><th>Balance</th><th>Status</th><th>Actions</th></tr></thead><tbody id="salesTable"></tbody></table></div>
         </section>
 
@@ -97,7 +106,7 @@
           <div class="cards three"><div class="metric"><span>Open purchase orders</span><strong id="mOpenPO">0</strong><small>Awaiting supply</small></div><div class="metric"><span>Purchase invoices</span><strong id="mPurchaseInvoices">0</strong><small id="mPurchaseBalance">0 outstanding</small></div><div class="metric"><span>Purchases this month</span><strong id="mPurchases">GH₵ 0.00</strong><small>Supplier invoices</small></div></div>
           <div class="panel"><div class="panel-head"><h3>Purchase orders</h3><button class="link-btn" data-open-purchase-order>Create purchase order</button></div><div class="table-wrap"><table><thead><tr><th>Order</th><th>Date</th><th>Supplier</th><th>Total</th><th>Received</th><th>Status</th><th>Actions</th></tr></thead><tbody id="purchaseOrdersTable"></tbody></table></div></div>
           <div class="panel"><div class="panel-head"><h3>Purchase invoices</h3><button class="link-btn" data-open-purchase-invoice>Record supplier invoice</button></div><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Date</th><th>Supplier</th><th>Total</th><th>Paid</th><th>Balance</th><th>Stock</th><th>Actions</th></tr></thead><tbody id="purchaseInvoicesTable"></tbody></table></div></div>
-          <div class="panel"><div class="panel-head"><h3>Suppliers</h3><button class="link-btn" data-open-supplier>Add supplier</button></div><div class="table-wrap"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Phone</th><th>Email</th><th>Purchase documents</th><th></th></tr></thead><tbody id="suppliersTable"></tbody></table></div></div>
+          <div class="panel"><div class="panel-head"><h3>Suppliers</h3><button class="link-btn" data-open-supplier>Add supplier</button></div><div class="table-wrap"><table><thead><tr><th>Supplier</th><th>Contact</th><th>Phone</th><th>Email</th><th>Total purchases</th><th>Amount owed</th><th>Purchase history</th><th></th></tr></thead><tbody id="suppliersTable"></tbody></table></div></div>
         </section>
 
         <section id="waybills" class="view">
@@ -114,17 +123,37 @@
             <div class="metric"><span>Net cash flow</span><strong id="cfNet">GH₵ 0.00</strong></div>
           </div>
           <div class="panel"><div class="panel-head"><h3>Monthly cash flow</h3></div><canvas id="monthlyCashChart"></canvas></div>
-          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th><th>Reference</th><th></th></tr></thead><tbody id="cashTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th><th>Reference</th><th>Payment method</th><th></th></tr></thead><tbody id="cashTable"></tbody></table></div>
+        </section>
+
+        <section id="expenses" class="view">
+          <div class="page-head"><div><h2>Expenses</h2><p>Track operating costs, vendor payments and receipt attachments.</p></div><button class="btn btn-primary" id="addExpenseBtn">+ Record expense</button></div>
+          <div class="cards three"><div class="metric"><span>Expenses this month</span><strong id="expenseMonthTotal">GH₵ 0.00</strong><small>Operating costs</small></div><div class="metric"><span>All recorded expenses</span><strong id="expenseTotal">GH₵ 0.00</strong><small id="expenseCount">0 expense entries</small></div><div class="metric"><span>Largest category</span><strong id="expenseTopCategory">—</strong><small>Based on recorded expenses</small></div></div>
+          <div class="toolbar"><input id="expenseSearch" class="input" placeholder="Search vendor, category or reference…"><select id="expenseCategoryFilter" class="input"><option value="">All categories</option></select></div>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Payment method</th><th>Reference</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody id="expensesTable"></tbody></table></div>
+        </section>
+
+        <section id="financeDocs" class="view">
+          <div class="page-head"><div><h2>Receipts & credit notes</h2><p>Find payment receipts and issue adjustments against sales invoices.</p></div><button class="btn btn-primary" id="createCreditNoteBtn">+ Create credit note</button></div>
+          <div class="panel"><div class="panel-head"><div><h3>Payment receipts</h3><small class="muted">Generated automatically when a payment is recorded</small></div></div><div class="table-wrap embedded-table"><table><thead><tr><th>Receipt</th><th>Date</th><th>Customer</th><th>Invoice</th><th>Method</th><th>Amount paid</th><th>Balance after payment</th><th></th></tr></thead><tbody id="receiptsTable"></tbody></table></div></div>
+          <div class="panel"><div class="panel-head"><div><h3>Credit notes</h3><small class="muted">Financial adjustments remain linked to their source invoice</small></div></div><div class="table-wrap embedded-table"><table><thead><tr><th>Credit note</th><th>Date</th><th>Customer</th><th>Invoice</th><th>Reason</th><th>Amount</th><th></th></tr></thead><tbody id="creditNotesTable"></tbody></table></div></div>
         </section>
 
         <section id="customers" class="view">
-          <div class="page-head"><div><h2>Customers</h2><p>CRM customer records with billing, shipping, tax and document history.</p></div><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div>
+          <div class="page-head"><div><h2>Customers & CRM</h2><p>Manage client details, sales history and outstanding balances.</p></div><div class="head-actions"><button class="btn btn-outline" id="exportCustomersBtn">Export CSV</button><button class="btn btn-outline" id="importCustomersBtn">Import CSV</button><input id="customerCsvInput" type="file" accept=".csv,text/csv" class="hidden"><button class="btn btn-primary" data-open-customer>+ Add Customer</button></div></div>
           <div class="toolbar"><input id="customerSearch" class="input" placeholder="Search customers…"></div>
-          <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Billing address</th><th>Documents</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
+          <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Billing address</th><th>Documents</th><th>Total spent</th><th>Owed</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
+        </section>
+
+        <section id="audit" class="view">
+          <div class="page-head"><div><h2>Audit log</h2><p>Review document, payment, stock and settings activity in this workspace.</p></div><button class="btn btn-outline" id="exportAuditBtn">Export CSV</button></div>
+          <div class="toolbar"><input id="auditSearch" class="input" placeholder="Search activity, record or user…"></div>
+          <div class="table-wrap"><table><thead><tr><th>When</th><th>User</th><th>Activity</th><th>Record</th><th>Details</th></tr></thead><tbody id="auditTable"></tbody></table></div>
         </section>
 
         <section id="reports" class="view">
-          <div class="page-head"><div><h2>Reports</h2><p>Printable business summaries and inventory reports.</p></div><button class="btn btn-primary" id="printReportBtn">Print Report</button></div>
+          <div class="page-head"><div><h2>Reports</h2><p>Sales, profit and loss, debtors, stock and tax reporting.</p></div><div class="head-actions"><button class="btn btn-outline" id="exportReportsBtn">Export for Excel (CSV)</button><button class="btn btn-primary" id="printReportBtn">Print / Save as PDF</button></div></div>
+          <div class="toolbar report-period"><label>From<input id="reportFrom" type="date" class="input"></label><label>To<input id="reportTo" type="date" class="input"></label><button id="applyReportRange" class="btn btn-outline">Apply range</button></div>
           <div class="cards four">
             <div class="metric"><span>Products</span><strong id="rProducts">0</strong></div>
             <div class="metric"><span>Units on hand</span><strong id="rUnits">0</strong></div>
@@ -135,22 +164,25 @@
             <div class="panel"><h3>Top selling products</h3><div id="topProducts" class="list"></div></div>
             <div class="panel"><h3>Inventory by category</h3><div id="categorySummary" class="list"></div></div>
           </div>
+          <div class="grid two"><div class="panel"><h3>Profit & loss snapshot</h3><div class="report-lines"><div><span>Sales revenue</span><strong id="reportSalesTotal">GH₵ 0.00</strong></div><div><span>Estimated cost of goods</span><strong id="reportCogs">GH₵ 0.00</strong></div><div><span>Operating expenses</span><strong id="reportExpenses">GH₵ 0.00</strong></div><div class="report-grand"><span>Estimated gross profit</span><strong id="reportProfit">GH₵ 0.00</strong></div></div></div><div class="panel"><h3>Receivables & tax</h3><div class="report-lines"><div><span>Customer balances due</span><strong id="reportDebtors">GH₵ 0.00</strong></div><div><span>Supplier balances due</span><strong id="reportCreditors">GH₵ 0.00</strong></div><div><span>VAT / levies on invoices</span><strong id="reportTax">GH₵ 0.00</strong></div><div class="report-grand"><span>Stock at cost</span><strong id="reportStockValue">GH₵ 0.00</strong></div></div></div></div>
         </section>
 
         <section id="settings" class="view">
           <div class="page-head"><div><h2>Settings</h2><p>Company information used on printed documents.</p></div><button class="btn btn-primary" id="saveSettingsBtn">Save Settings</button></div>
           <div class="panel form-grid">
             <label>Company name<input id="setName" class="input"></label>
+            <label>Business logo (PNG, JPG or WebP)<input id="setLogoFile" class="input" type="file" accept="image/png,image/jpeg,image/webp"><small class="muted">Up to 1 MB. Saved in the Drive workspace and used on printable documents.</small></label>
+            <div class="logo-setting-preview"><span class="muted">Current logo</span><img id="setLogoPreview" src="assets/elitevolt-logo.png" alt="Business logo preview"></div>
             <label>Registration number<input id="setCompanyReg" class="input"></label>
             <label>Phone<input id="setPhone" class="input"></label>
             <label>Email<input id="setEmail" class="input"></label>
             <label>Company address<textarea id="setAddress" class="input" rows="2"></textarea></label>
             <label>Tax/VAT number<input id="setTax" class="input"></label>
             <label>Invoice prefix<input id="setPrefix" class="input"></label>
-            <label>Currency<input id="setCurrency" class="input"></label>
-            <label>Tax categories (all configured categories apply together)<textarea id="setTaxCategories" class="input" rows="4" placeholder="VAT 15%
+            <label>Default currency<select id="setCurrency" class="input"><option value="GHS">Ghana cedi (GHS)</option><option value="USD">US dollar (USD)</option><option value="EUR">Euro (EUR)</option><option value="NGN">Nigerian naira (NGN)</option></select><small class="muted">Choose a default. Sales documents can use GHS, USD, EUR or NGN.</small></label>
+            <label>Tax categories (all configured categories apply together)<textarea id="setTaxCategories" class="input" rows="4" placeholder="VAT 12.5%
 NHIL 2.5%
-GETFund 2.5%"></textarea><small class="muted">Enter one category per line or separate with commas. Example: VAT 15%, NHIL 2.5%, GETFund 2.5%.</small></label>
+GETFund 2.5%"></textarea><small class="muted">Ghana defaults: VAT 12.5%, NHIL 2.5%, GETFund 2.5%. Customize as required.</small></label>
             <label>Default tax rate (%)<input id="setDefaultTaxRate" type="number" min="0" step="0.01" class="input"></label>
             <label>Quotation / Proforma validity (days)<input id="setValidityDays" type="number" min="1" step="1" class="input" value="7"><small class="muted">Default: 7 days. The created date and valid-until date appear on documents.</small></label>
             <label style="display:flex;gap:8px;align-items:center"><input id="setTaxEnabled" type="checkbox" checked> Include taxes on sales documents</label>
@@ -165,6 +197,8 @@ GETFund 2.5%"></textarea><small class="muted">Enter one category per line or sep
             <p id="driveDetails" class="muted">Not connected.</p>
             <button id="manualBackupBtn" class="btn btn-outline">Backup now</button>
           </div>
+          <div class="panel form-grid admin-settings"><div><h3>Team access (demo controls)</h3><p class="muted">Role settings preview only. This Drive-based edition does not enforce server-side permissions.</p></div><label>Current workspace role<select id="setRole" class="input"><option>Super Admin</option><option>Admin</option><option>Accountant</option><option>Sales Staff</option></select></label></div>
+          <div class="panel"><h3>Explore with Ghana sample data</h3><p class="muted">Adds sample clients, products, supplier activity, invoices, receipts and expenses to this workspace. Sample records are clearly labeled and can be archived later.</p><button id="loadDemoDataBtn" class="btn btn-outline">Load sample business records</button></div>
         </section>
       </main>
     </div>
