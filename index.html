@@ -26,6 +26,13 @@
       <button id="connectDriveBtn" class="btn btn-primary btn-wide">Connect Google Drive</button>
       <small>Your business data is stored in a Drive file created by this application.</small>
       <div id="authStatus" class="status muted">Waiting for Google services…</div>
+      <div id="authLoadingState" class="auth-loading hidden" role="status" aria-live="polite">
+        <div class="auth-loading-title"><span class="loading-orb"></span><strong>Preparing your workspace</strong></div>
+        <span class="skeleton-line skeleton-wide"></span>
+        <span class="skeleton-line skeleton-medium"></span>
+        <span class="skeleton-line skeleton-short"></span>
+        <small>Loading your business records securely from Google Drive…</small>
+      </div>
     </div>
   </div>
 

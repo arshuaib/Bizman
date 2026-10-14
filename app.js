@@ -98,13 +98,20 @@ function mergeState(raw){
     settings:{...base.settings,...(raw?.settings||{}),currency:raw?.settings?.currency==="GH₵"?"GHS":(raw?.settings?.currency||base.settings.currency),taxCategories:raw?.settings?.taxCategories==="NHIL 2.5%, GETFund 2.5%, VAT 15%"?base.settings.taxCategories:(raw?.settings?.taxCategories||base.settings.taxCategories)}
   };
 }
-function toast(msg){
-  const el=$("#toast"); el.textContent=msg; el.classList.add("show");
-  clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove("show"),2600);
+function toast(msg,type="success"){
+  const el=$("#toast");
+  if(type==="success"&&/^(could not|cannot|can't|failed|error|enter |select |add |choose |no |not enough|invalid|required|only )/i.test(String(msg).trim()))type="error";
+  el.dataset.type=type;el.textContent=msg;el.classList.add("show");el.setAttribute("role",type==="error"?"alert":"status");
+  clearTimeout(toast.t); toast.t=setTimeout(()=>el.classList.remove("show"),3200);
 }
 function setDriveStatus(text,ok=false){$("#driveStatus").textContent=`Drive: ${text}`;$("#driveStatus").style.background=ok?"rgba(121,201,0,.18)":"rgba(255,255,255,.1)"}
 function showApp(){ $("#authScreen").classList.add("hidden"); $("#app").classList.remove("hidden"); renderAll(); }
 function showAuth(){ $("#authScreen").classList.remove("hidden"); $("#app").classList.add("hidden"); }
+function setAuthLoading(loading){
+  const button=$("#connectDriveBtn"),state=$("#authLoadingState");
+  state?.classList.toggle("hidden",!loading);button.disabled=loading||!window.gapiInited||!window.gisInited;
+  button.textContent=loading?"Connecting to Google Drive…":"Connect Google Drive";
+}
 
 async function init(){
   window.gapiLoaded=()=>gapi.load("client",initGapi);
@@ -131,18 +138,20 @@ function maybeAuthReady(){
   }
 }
 async function connectDrive(){
-  if(!tokenClient) return;
+  if(!tokenClient){toast("Google sign-in is not ready yet.","error");return}
+  setAuthLoading(true);$("#authStatus").textContent="Connecting securely to Google Drive…";
   tokenClient.callback=async(resp)=>{
-    if(resp.error){toast("Google authorization failed.");return}
+    if(resp.error){setAuthLoading(false);$("#authStatus").textContent="Google Drive connection was cancelled or could not be completed.";toast("Google authorization failed.","error");return}
     try{
       driveReady=true; setDriveStatus("Connected",true);
       await loadFromDrive();
+      setAuthLoading(false);
       showApp();
       toast("Google Drive connected.");
-    }catch(e){console.error(e);toast("Drive connection worked, but data could not be loaded.");showApp();}
+    }catch(e){console.error(e);driveReady=false;setAuthLoading(false);$("#authStatus").textContent="Drive connected, but workspace data could not be loaded. You can reconnect and try again.";setDriveStatus("Load error");toast("Drive connection worked, but data could not be loaded.","error");}
   };
   const existing=gapi.client.getToken();
-  tokenClient.requestAccessToken({prompt:existing?"":"consent"});
+  try{tokenClient.requestAccessToken({prompt:existing?"":"consent"})}catch(e){setAuthLoading(false);$("#authStatus").textContent="Google Drive could not be opened. Please try again.";toast("Google authorization failed.","error")}
 }
 async function loadFromDrive(){
   const qFolder=`name='${APP_FOLDER.replace(/'/g,"\\'")}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
@@ -199,6 +208,7 @@ function audit(action,record="",details=""){
 }
 function mutate(fn,action="Updated business data",record="",details=""){
   fn();audit(action,record,details);renderAll();scheduleSave();
+  toast(action==="Updated business data"?"Changes saved.":`${action}.`);
 }
 
 function renderAll(){
@@ -289,7 +299,7 @@ function renderDashboard(){
   $("#mOverdue").textContent=String(overdue.length);$("#mOverdueValue").textContent=`${money(overdue.reduce((s,i)=>s+invoiceBalance(i),0),currency)} overdue`;
   $("#mLowStock").textContent=String(low.length);$("#mCustomers").textContent=String(state.customers.filter(c=>!c.deletedAt).length);
   $("#trendLabel").textContent=currency;renderRevenueChart(currency);renderProductSalesChart(monthInvoices);renderPaymentChart(month);
-  $("#lowStockList").innerHTML=low.length?low.slice(0,8).map(p=>`<div class="list-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.sku||"No SKU")}</small></div><span class="badge ${p.qty<=0?"out":"part"}">${p.qty} left</span></div>`).join(""):`<div class="empty">No low-stock items.</div>`;
+  $("#lowStockList").innerHTML=low.length?low.slice(0,8).map(p=>`<div class="list-row"><div><strong>${esc(p.name)}</strong><small>${esc(p.sku||"No SKU")}</small></div><span class="badge ${p.qty<=0?"out":"part"}">${p.qty} left</span></div>`).join(""):`<div class="dashboard-empty"><strong>Stock levels look good</strong><span>Items at or below their reorder point will show up here.</span></div>`;
   const recent=[...state.invoices].filter(i=>!i.deletedAt).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).slice(0,8);
   $("#recentInvoicesTable").innerHTML=recent.length?recent.map(i=>`<tr><td><strong>${esc(i.number)}</strong></td><td>${esc(i.customerName||"Customer missing")}</td><td>${esc(i.date||"—")}</td><td>${esc(i.dueDate||"—")}</td><td>${money(i.total,i.currency||currency)}</td><td>${money(invoiceBalance(i),i.currency||currency)}</td><td><span class="badge ${statusClass(effectiveInvoiceStatus(i))}">${esc(effectiveInvoiceStatus(i))}</span></td></tr>`).join(""):`<tr><td colspan="7" class="empty">Create your first invoice to see recent billing activity.</td></tr>`;
 }
@@ -304,7 +314,7 @@ function renderProductSalesChart(invoices){
   charts.productSales=new Chart($("#productSalesChart"),{type:"bar",data:{labels:rows.length?rows.map(x=>x[0]):["No sales yet"],datasets:[{data:rows.length?rows.map(x=>round2(x[1])):[0],backgroundColor:["#43780b","#78a940","#a6cd75","#c7dfaa","#dcebcf"],borderRadius:7,maxBarThickness:30}]},options:{indexAxis:"y",responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>money(c.raw)}}},scales:{x:{beginAtZero:true,grid:{color:"#eef2f5"}},y:{grid:{display:false}}}}});
 }
 function renderPaymentChart(month){
-  destroyChart("payment");const currency=state.settings.currency||"GHS",totals={};state.receipts.filter(r=>String(r.date||"").startsWith(month)&&(r.currency||currency)===currency).forEach(r=>{const key=r.paymentMethod||"Other";totals[key]=(totals[key]||0)+Number(r.amount||0)});const rows=Object.entries(totals).sort((a,b)=>b[1]-a[1]);
+  destroyChart("payment");const currency=state.settings.currency||"GHS",totals={};state.receipts.filter(r=>String(r.date||"").startsWith(month)&&(r.currency||currency)===currency).forEach(r=>{const key=displayPaymentMethod(r.paymentMethod)||"Other";totals[key]=(totals[key]||0)+Number(r.amount||0)});const rows=Object.entries(totals).sort((a,b)=>b[1]-a[1]);
   charts.payment=new Chart($("#paymentChart"),{type:"doughnut",data:{labels:rows.length?rows.map(x=>x[0]):["No payments yet"],datasets:[{data:rows.length?rows.map(x=>x[1]):[1],backgroundColor:["#447a0a","#78a940","#b3d783","#e2edcf","#96a5b3"],borderWidth:0,hoverOffset:5}]},options:{responsive:true,maintainAspectRatio:false,cutout:"68%",plugins:{legend:{position:"bottom",labels:{boxWidth:10,usePointStyle:true}},tooltip:{callbacks:{label:c=>rows.length?`${c.label}: ${money(c.raw)}`:"No payments recorded"}}}}});
 }
 
@@ -316,7 +326,7 @@ function renderStock(){
   $("#stockTable").innerHTML=rows.length?rows.map(p=>{
     const reserved=reservedQty(p.id),avail=Math.max(0,Number(p.qty||0)-reserved);
     const badge=avail<=0?"out":avail<=Number(p.minQty||0)?"part":"ok";
-    const menu=`<button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn danger-action" data-delete-product="${p.id}">Delete</button>`;
+    const menu=`<button class="icon-btn" data-edit-product="${p.id}">Edit</button><button class="icon-btn" data-adjust-product="${p.id}">Adjust</button><button class="icon-btn danger-action" data-delete-product="${p.id}">Archive</button>`;
     return `<tr><td><strong>${esc(p.name)}</strong></td><td>${esc(p.sku||"—")}</td><td>${esc(p.category||"—")}</td><td><span class="badge ${badge}">${p.qty} on hand</span><small class="table-sub">${reserved} reserved • ${avail} available</small></td><td>${money(p.cost)}</td><td>${money(p.price)}</td><td>${money(p.qty*p.cost)}</td><td><div class="action-menu"><button class="action-menu-toggle" type="button" aria-expanded="false">Actions <span>▾</span></button><div class="action-menu-list">${menu}</div></div></td></tr>`;
   }).join(""):`<tr><td colspan="8" class="empty">No products found.</td></tr>`;
   $$('[data-edit-product]').forEach(b=>b.onclick=()=>openProduct(b.dataset.editProduct));
@@ -484,7 +494,7 @@ function renderCashflow(){
   const currency=state.settings.currency||"GHS",allTransactions=state.transactions.filter(t=>!t.deletedAt),activeTransactions=allTransactions.filter(t=>(t.currency||currency)===currency);
   const ins=activeTransactions.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0),outs=activeTransactions.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0);
   $("#cfIn").textContent=money(ins);$("#cfOut").textContent=money(outs);$("#cfNet").textContent=money(ins-outs);
-  $("#cashTable").innerHTML=[...allTransactions].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(t=>`<tr><td>${esc(t.date)}</td><td><span class="badge ${t.type==="in"?"paid":"unpaid"}">${t.type==="in"?"Cash in":"Cash out"}</span></td><td>${esc(t.category||"—")}</td><td>${esc(t.description||"")}</td><td>${money(t.amount,t.currency||state.settings.currency)}</td><td>${esc(t.reference||"—")}</td><td>${esc(t.paymentMethod||"—")}</td><td><button class="icon-btn" data-delete-cash="${t.id}">Archive</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">No transactions.</td></tr>`;
+  $("#cashTable").innerHTML=[...allTransactions].sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).map(t=>`<tr><td>${esc(t.date)}</td><td><span class="badge ${t.type==="in"?"paid":"unpaid"}">${t.type==="in"?"Cash in":"Cash out"}</span></td><td>${esc(t.category||"—")}</td><td>${esc(t.description||"")}</td><td>${money(t.amount,t.currency||state.settings.currency)}</td><td>${esc(t.reference||"—")}</td><td>${esc(displayPaymentMethod(t.paymentMethod))}</td><td><button class="icon-btn" data-delete-cash="${t.id}">Archive</button></td></tr>`).join("")||`<tr><td colspan="8" class="empty">No transactions.</td></tr>`;
   $$("[data-delete-cash]").forEach(b=>b.onclick=()=>deleteCash(b.dataset.deleteCash));
   destroyChart("monthly");const months=lastMonths(12);const vals=months.map(m=>{const ts=activeTransactions.filter(t=>t.date.startsWith(m));return {label:monthLabel(m),v:ts.filter(t=>t.type==="in").reduce((s,t)=>s+Number(t.amount||0),0)-ts.filter(t=>t.type==="out").reduce((s,t)=>s+Number(t.amount||0),0)}});
   charts.monthly=new Chart($("#monthlyCashChart"),{type:"bar",data:{labels:vals.map(x=>x.label),datasets:[{label:"Net cash flow",data:vals.map(x=>x.v)}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true}}}});
@@ -495,13 +505,13 @@ function renderExpenses(){
   $("#expenseMonthTotal").textContent=money(monthTotal);$("#expenseTotal").textContent=money(total);$("#expenseCount").textContent=`${active.length} expense entries`;$("#expenseTopCategory").textContent=Object.entries(categories).sort((a,b)=>b[1]-a[1])[0]?.[0]||"—";
   const select=$("#expenseCategoryFilter"),selected=select.value;select.innerHTML=`<option value="">All categories</option>${Object.keys(categories).sort().map(x=>`<option ${selected===x?"selected":""}>${esc(x)}</option>`).join("")}`;
   const rows=active.filter(x=>`${x.vendor||""} ${x.category||""} ${x.reference||""} ${x.description||""}`.toLowerCase().includes(search)).filter(x=>!category||x.category===category).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
-  $("#expensesTable").innerHTML=rows.length?rows.map(x=>`<tr><td>${esc(x.date||"")}</td><td>${esc(x.category||"—")}</td><td>${esc(x.vendor||"—")}</td><td>${esc(x.paymentMethod||"—")}</td><td>${esc(x.reference||"—")}</td><td>${money(x.amount,x.currency||state.settings.currency)}</td><td>${x.receiptData?`<a class="link-btn" href="${x.receiptData}" download="${esc(x.receiptName||"expense-receipt")}">View receipt</a>`:esc(x.receiptName||"—")}</td><td><button class="icon-btn danger-action" data-archive-expense="${x.id}">Archive</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No expenses recorded yet.</td></tr>`;
+  $("#expensesTable").innerHTML=rows.length?rows.map(x=>`<tr><td>${esc(x.date||"")}</td><td>${esc(x.category||"—")}</td><td>${esc(x.vendor||"—")}</td><td>${esc(displayPaymentMethod(x.paymentMethod))}</td><td>${esc(x.reference||"—")}</td><td>${money(x.amount,x.currency||state.settings.currency)}</td><td>${x.receiptData?`<a class="link-btn" href="${x.receiptData}" download="${esc(x.receiptName||"expense-receipt")}">View receipt</a>`:esc(x.receiptName||"—")}</td><td><button class="icon-btn danger-action" data-archive-expense="${x.id}">Archive</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">No expenses recorded yet.</td></tr>`;
   $("#addExpenseBtn").onclick=openExpense;
-  $$('[data-archive-expense]').forEach(b=>b.onclick=()=>{const x=state.expenses.find(e=>e.id===b.dataset.archiveExpense);if(x)mutate(()=>x.deletedAt=new Date().toISOString(),"Archived expense",x.reference||x.id,x.category||"")});
+  $$('[data-archive-expense]').forEach(b=>b.onclick=()=>{const x=state.expenses.find(e=>e.id===b.dataset.archiveExpense);if(x)confirmAction({title:"Archive this expense?",message:`${x.category||"This expense"}${x.vendor?` from ${x.vendor}`:""} will be hidden from active expense totals. Its record and receipt will be retained.`,confirmLabel:"Archive expense",onConfirm:()=>mutate(()=>x.deletedAt=new Date().toISOString(),"Archived expense",x.reference||x.id,x.category||"")})});
 }
 function renderFinanceDocs(){
   const receipts=[...state.receipts].filter(x=>!x.deletedAt).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
-  $("#receiptsTable").innerHTML=receipts.length?receipts.map(r=>`<tr><td><strong>${esc(r.number)}</strong></td><td>${esc(r.date||"")}</td><td>${esc(r.customerName||"")}</td><td>${esc(r.invoiceNumber||"")}</td><td>${esc(r.paymentMethod||"Cash")}</td><td>${money(r.amount,r.currency||state.settings.currency)}</td><td>${money(r.balanceAfter,r.currency||state.settings.currency)}</td><td><button class="icon-btn" data-print-receipt="${r.id}">Print receipt</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">Receipts will appear here as customer payments are recorded.</td></tr>`;
+  $("#receiptsTable").innerHTML=receipts.length?receipts.map(r=>`<tr><td><strong>${esc(r.number)}</strong></td><td>${esc(r.date||"")}</td><td>${esc(r.customerName||"")}</td><td>${esc(r.invoiceNumber||"")}</td><td>${esc(displayPaymentMethod(r.paymentMethod||"Cash"))}</td><td>${money(r.amount,r.currency||state.settings.currency)}</td><td>${money(r.balanceAfter,r.currency||state.settings.currency)}</td><td><button class="icon-btn" data-print-receipt="${r.id}">Print receipt</button></td></tr>`).join(""):`<tr><td colspan="8" class="empty">Receipts will appear here as customer payments are recorded.</td></tr>`;
   const credits=[...state.creditNotes].filter(x=>!x.voidedAt).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")));
   $("#creditNotesTable").innerHTML=credits.length?credits.map(c=>`<tr><td><strong>${esc(c.number)}</strong></td><td>${esc(c.date||"")}</td><td>${esc(c.customerName||"")}</td><td>${esc(c.invoiceNumber||"")}</td><td>${esc(c.reason||"")}</td><td>${money(c.amount,c.currency||state.settings.currency)}</td><td><button class="icon-btn" data-print-credit="${c.id}">Print</button></td></tr>`).join(""):`<tr><td colspan="7" class="empty">No credit notes have been issued.</td></tr>`;
   $("#createCreditNoteBtn").onclick=openCreditNote;$$('[data-print-receipt]').forEach(b=>b.onclick=()=>printReceipt(b.dataset.printReceipt));$$('[data-print-credit]').forEach(b=>b.onclick=()=>printCreditNote(b.dataset.printCredit));
@@ -557,8 +567,8 @@ function renderReports(){
   const from=$("#reportFrom")?.value||"0000-01-01",to=$("#reportTo")?.value||"9999-12-31",currency=state.settings.currency||"GHS",invoices=state.invoices.filter(i=>i.date>=from&&i.date<=to&&i.status!=="Void"&&!i.voidedAt),expenses=state.expenses.filter(x=>!x.deletedAt&&x.date>=from&&x.date<=to&&(x.currency||currency)===currency);
   $("#rProducts").textContent=state.products.filter(p=>!p.deletedAt).length;$("#rUnits").textContent=state.products.filter(p=>!p.deletedAt).reduce((s,p)=>s+Number(p.qty||0),0);$("#rInvoices").textContent=invoices.length;$("#rCustomers").textContent=state.customers.filter(c=>!c.deletedAt).length;
   const sold={};invoices.forEach(i=>i.items.forEach(x=>sold[x.productId]=(sold[x.productId]||0)+Number(x.qty||0)));
-  $("#topProducts").innerHTML=Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([id,q])=>{const p=state.products.find(p=>p.id===id);return `<div class="list-row"><div><strong>${esc(p?.name||"Deleted product")}</strong><small>${q} units sold</small></div></div>`}).join("")||`<div class="empty">No sales data.</div>`;
-  const cat={};state.products.filter(p=>!p.deletedAt).forEach(p=>cat[p.category||"Other"]=(cat[p.category||"Other"]||0)+Number(p.qty||0));$("#categorySummary").innerHTML=Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="list-row"><strong>${esc(k)}</strong><span>${v} units</span></div>`).join("")||`<div class="empty">No stock data.</div>`;
+  $("#topProducts").innerHTML=Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([id,q])=>{const p=state.products.find(p=>p.id===id);return `<div class="list-row"><div><strong>${esc(p?.name||"Deleted product")}</strong><small>${q} units sold</small></div></div>`}).join("")||`<div class="dashboard-empty"><strong>No product sales yet</strong><span>Sales by product will appear after your first invoice.</span><button type="button" class="link-btn" data-empty-action="invoice">Create an invoice</button></div>`;
+  const cat={};state.products.filter(p=>!p.deletedAt).forEach(p=>cat[p.category||"Other"]=(cat[p.category||"Other"]||0)+Number(p.qty||0));$("#categorySummary").innerHTML=Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="list-row"><strong>${esc(k)}</strong><span>${v} units</span></div>`).join("")||`<div class="dashboard-empty"><strong>No inventory categories</strong><span>Add products to organize stock and monitor value.</span><button type="button" class="link-btn" data-empty-action="product">Add a product</button></div>`;
   const sameCurrency=invoices.filter(i=>(i.currency||currency)===currency),revenue=sameCurrency.reduce((n,i)=>n+Number(i.total||0),0),cogs=sameCurrency.reduce((n,i)=>n+i.items.reduce((sum,x)=>sum+Number(x.qty||0)*Number(state.products.find(p=>p.id===x.productId)?.cost||0),0),0),expenseTotal=expenses.reduce((n,x)=>n+Number(x.amount||0),0),tax=sameCurrency.reduce((n,i)=>n+Number(i.taxTotal||0),0),debtors=sameCurrency.reduce((n,i)=>n+invoiceBalance(i),0),creditors=state.purchaseInvoices.filter(p=>(p.currency||currency)===currency).reduce((n,p)=>n+Math.max(0,Number(p.total||0)-Number(p.paid||0)),0),stock=state.products.filter(p=>!p.deletedAt).reduce((n,p)=>n+Number(p.qty||0)*Number(p.cost||0),0);
   $("#reportSalesTotal").textContent=money(revenue,currency);$("#reportCogs").textContent=money(cogs,currency);$("#reportExpenses").textContent=money(expenseTotal,currency);$("#reportProfit").textContent=money(revenue-cogs-expenseTotal,currency);$("#reportDebtors").textContent=money(debtors,currency);$("#reportCreditors").textContent=money(creditors,currency);$("#reportTax").textContent=money(tax,currency);$("#reportStockValue").textContent=money(stock,currency);
 }
@@ -569,15 +579,46 @@ function renderSettings(){
 function modal(content){$("#modalCard").innerHTML=content;$("#modal").classList.remove("hidden")}
 function closeModal(){$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}
 document.addEventListener("click",e=>{if(e.target.matches("[data-close-modal]"))closeModal()});
+function confirmAction({title="Confirm action",message="Continue with this action?",confirmLabel="Confirm",reasonLabel="",reasonPlaceholder="",onConfirm}){
+  modal(`<div class="confirm-dialog"><div class="confirm-icon">!</div><div class="modal-head"><div><div class="eyebrow">PLEASE CONFIRM</div><h3>${esc(title)}</h3></div><button class="close" data-close-modal aria-label="Close">×</button></div><p class="confirm-copy">${esc(message)}</p>${reasonLabel?`<label class="confirm-reason">${esc(reasonLabel)}<textarea id="confirmActionReason" class="input" rows="3" placeholder="${esc(reasonPlaceholder)}" required></textarea></label>`:""}<div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-danger" id="confirmActionBtn">${esc(confirmLabel)}</button></div></div>`);
+  $("#confirmActionBtn").onclick=()=>{const reason=$("#confirmActionReason")?.value.trim()||"";if(reasonLabel&&!reason){toast("Enter a reason to continue.","error");$("#confirmActionReason")?.focus();return}closeModal();onConfirm?.(reason)};
+}
 
 const tablePreferences=new WeakMap();
+const tableEmptyStates={
+  stockTable:{icon:"▣",title:"Build your product catalogue",copy:"Add the products and services you sell to track availability, cost and price.",action:"product",button:"Add a product"},
+  salesTable:{icon:"▤",title:"Your sales documents will appear here",copy:"Create a quotation, estimate or invoice to start tracking customer sales.",action:"invoice",button:"Create an invoice"},
+  recentInvoicesTable:{icon:"◷",title:"No invoices yet",copy:"Invoices you create will appear here with their payment status."},
+  purchaseOrdersTable:{icon:"▧",title:"No purchase orders yet",copy:"Prepare an order for a supplier and track goods as they arrive.",action:"purchaseOrder",button:"Create a purchase order"},
+  purchaseInvoicesTable:{icon:"▤",title:"No supplier invoices yet",copy:"Record supplier bills here and link each one to a purchase order.",action:"purchaseInvoice",button:"Record a purchase invoice"},
+  suppliersTable:{icon:"♧",title:"Add your first supplier",copy:"Keep supplier contacts and purchase history together in one place.",action:"supplier",button:"Add a supplier"},
+  waybillsTable:{icon:"⇄",title:"No waybills recorded",copy:"Create a waybill to document goods dispatched to a customer or received from a supplier.",action:"waybill",button:"Create a waybill"},
+  cashTable:{icon:"₵",title:"Your cash log is ready",copy:"Record a cash movement to keep incoming and outgoing payments visible.",action:"cash",button:"Record a transaction"},
+  expensesTable:{icon:"↘",title:"No expenses recorded",copy:"Add an operating expense and attach a receipt for a complete audit trail.",action:"expense",button:"Record an expense"},
+  receiptsTable:{icon:"✓",title:"No receipts yet",copy:"Receipts are created automatically whenever you record a customer payment."},
+  creditNotesTable:{icon:"↶",title:"No credit notes issued",copy:"Credit notes stay linked to the source invoice and remain in your financial history."},
+  customersTable:{icon:"♙",title:"Add your first customer",copy:"Store billing details once, then reuse them across quotes, invoices and statements.",action:"customer",button:"Add a customer"},
+  auditTable:{icon:"◷",title:"No activity recorded yet",copy:"Workspace changes and financial actions will appear here as an audit trail."}
+};
+function emptyStateMarkup(config,filtered=false){
+  if(filtered)return `<div class="table-empty-state"><span class="empty-state-icon">⌕</span><strong>No matching records</strong><span>Try a different search term or clear the table search.</span></div>`;
+  return `<div class="table-empty-state"><span class="empty-state-icon">${esc(config?.icon||"◦")}</span><strong>${esc(config?.title||"Nothing to show yet")}</strong><span>${esc(config?.copy||"Records will appear here when you add them.")}</span>${config?.action?`<button type="button" class="btn btn-outline" data-empty-action="${esc(config.action)}">${esc(config.button||"Get started")}</button>`:""}</div>`;
+}
+function tableHasSourceRecords(id){
+  const active=items=>(items||[]).some(x=>!x.deletedAt&&!x.voidedAt);
+  return ({stockTable:()=>active(state.products),salesTable:()=>allDocuments().length>0,recentInvoicesTable:()=>active(state.invoices),purchaseOrdersTable:()=>active(state.purchaseOrders),purchaseInvoicesTable:()=>active(state.purchaseInvoices),suppliersTable:()=>active(state.suppliers),waybillsTable:()=>active(state.waybills),cashTable:()=>active(state.transactions),expensesTable:()=>active(state.expenses),receiptsTable:()=>active(state.receipts),creditNotesTable:()=>active(state.creditNotes),customersTable:()=>active(state.customers),auditTable:()=>state.auditLog.length>0})[id]?.()||false;
+}
+document.addEventListener("click",e=>{
+  const action=e.target.closest("[data-empty-action]")?.dataset.emptyAction;if(!action)return;
+  ({product:()=>openProduct(),invoice:()=>openSale(null,false,"invoice"),purchaseOrder:()=>openPurchase("order"),purchaseInvoice:()=>openPurchase("invoice"),supplier:()=>openSupplier(),waybill:()=>openWaybill(),cash:()=>openCash(),expense:()=>openExpense(),customer:()=>openCustomer()})[action]?.();
+});
 function enhanceTables(){
   document.querySelectorAll(".table-wrap").forEach(wrap=>{
     const table=wrap.querySelector("table"),body=table?.tBodies?.[0];if(!table||!body)return;
     let pref=tablePreferences.get(table);if(!pref){pref={query:"",page:0,pageSize:8,sort:-1,direction:1};tablePreferences.set(table,pref)}
     let controls=wrap.querySelector(":scope > .table-controls");
     if(!controls){controls=document.createElement("div");controls.className="table-controls";controls.innerHTML=`<label class="table-search">⌕ <input type="search" placeholder="Search in this table…" aria-label="Search in this table"></label><span class="table-count"></span><div class="table-page"><button type="button" class="icon-btn table-prev" aria-label="Previous page">‹</button><span></span><button type="button" class="icon-btn table-next" aria-label="Next page">›</button></div>`;wrap.appendChild(controls);controls.querySelector("input").oninput=e=>{pref.query=e.target.value.toLowerCase();pref.page=0;update()};controls.querySelector(".table-prev").onclick=()=>{pref.page=Math.max(0,pref.page-1);update()};controls.querySelector(".table-next").onclick=()=>{pref.page++;update()};table.querySelectorAll("thead th").forEach((th,index)=>{th.classList.add("sortable");th.title="Click to sort";th.onclick=()=>{if(pref.sort===index)pref.direction*=-1;else{pref.sort=index;pref.direction=1}pref.page=0;update()}})}
-    const update=()=>{let rows=[...body.rows].filter(r=>!r.querySelector(".empty")),filtered=rows.filter(r=>r.textContent.toLowerCase().includes(pref.query));if(pref.sort>=0){const val=r=>r.cells[pref.sort]?.textContent.trim()||"";filtered.sort((a,b)=>{const aa=val(a),bb=val(b),na=Number(aa.replace(/[^\d.-]/g,"")),nb=Number(bb.replace(/[^\d.-]/g,""));return (Number.isFinite(na)&&Number.isFinite(nb)&&aa.match(/[\d]/)&&bb.match(/[\d]/)?na-nb:aa.localeCompare(bb,undefined,{numeric:true,sensitivity:"base"}))*pref.direction})}const pages=Math.max(1,Math.ceil(filtered.length/pref.pageSize));pref.page=Math.min(pref.page,pages-1);const visible=new Set(filtered.slice(pref.page*pref.pageSize,(pref.page+1)*pref.pageSize));rows.forEach(r=>r.style.display=visible.has(r)?"":"none");controls.querySelector(".table-count").textContent=`${filtered.length} record${filtered.length===1?"":"s"}`;controls.querySelector(".table-page span").textContent=`${pref.page+1} / ${pages}`;controls.querySelector(".table-prev").disabled=pref.page===0;controls.querySelector(".table-next").disabled=pref.page>=pages-1};
+    const update=()=>{let rows=[...body.rows].filter(r=>!r.querySelector(".empty")),filtered=rows.filter(r=>r.textContent.toLowerCase().includes(pref.query));if(pref.sort>=0){const val=r=>r.cells[pref.sort]?.textContent.trim()||"";filtered.sort((a,b)=>{const aa=val(a),bb=val(b),na=Number(aa.replace(/[^\d.-]/g,"")),nb=Number(bb.replace(/[^\d.-]/g,""));return (Number.isFinite(na)&&Number.isFinite(nb)&&aa.match(/[\d]/)&&bb.match(/[\d]/)?na-nb:aa.localeCompare(bb,undefined,{numeric:true,sensitivity:"base"}))*pref.direction})}let emptyRow=[...body.rows].find(r=>r.querySelector(".empty"));if(!emptyRow){emptyRow=document.createElement("tr");emptyRow.innerHTML="<td class=\"empty\"></td>";body.appendChild(emptyRow)}const emptyCell=emptyRow.querySelector(".empty"),hasSource=tableHasSourceRecords(body.id);emptyCell.colSpan=Math.max(1,table.tHead?.rows?.[0]?.cells.length||1);emptyCell.innerHTML=emptyStateMarkup(tableEmptyStates[body.id],(rows.length>0&&filtered.length===0)||(rows.length===0&&hasSource));emptyRow.style.display=filtered.length?"none":"";const pages=Math.max(1,Math.ceil(filtered.length/pref.pageSize));pref.page=Math.min(pref.page,pages-1);const visible=new Set(filtered.slice(pref.page*pref.pageSize,(pref.page+1)*pref.pageSize));rows.forEach(r=>r.style.display=visible.has(r)?"":"none");controls.querySelector(".table-count").textContent=`${filtered.length} record${filtered.length===1?"":"s"}`;controls.querySelector(".table-page span").textContent=`${pref.page+1} / ${pages}`;controls.querySelector(".table-prev").disabled=pref.page===0;controls.querySelector(".table-next").disabled=pref.page>=pages-1};
     if(!controls.dataset.bound){controls.dataset.bound="1";table._tableUpdate=update}update();
   });
 }
@@ -671,11 +712,9 @@ function deleteProduct(id){
   const p=state.products.find(x=>x.id===id); if(!p)return;
   const referenced=[...allDocuments(),...state.purchaseOrders,...state.purchaseInvoices,...state.waybills].some(d=>d.items?.some(x=>x.productId===id));
   const reserved=reservedQty(id)>0;
-  if(referenced){toast("Delete protection: this item is used in a sales, purchase or waybill record. Edit or archive it instead.");return}
-  if(reserved){toast("Delete protection: this item has reserved stock for a customer.");return}
-  if(Number(p.qty||0)>0 && !confirm(`Delete ${p.name}? This will remove ${p.qty} unit(s) currently in stock. Continue?`))return;
-  if(Number(p.qty||0)<=0 && !confirm(`Delete ${p.name}? This action cannot be undone.`))return;
-  mutate(()=>p.deletedAt=new Date().toISOString(),"Archived product",p.sku||p.name,"Product inventory record retained");
+  if(referenced){toast("This item is used in a sales, purchase or waybill record, so it cannot be archived. Existing documents remain linked to it.","error");return}
+  if(reserved){toast("This item has stock reserved for a customer and cannot be archived yet.","error");return}
+  confirmAction({title:`Archive ${p.name}?`,message:Number(p.qty||0)>0?`${p.qty} unit(s) are currently in stock. Archiving hides this item from active selection while retaining its inventory record.`:"This item will be hidden from active inventory. Its record will be retained.",confirmLabel:"Archive product",onConfirm:()=>mutate(()=>p.deletedAt=new Date().toISOString(),"Archived product",p.sku||p.name,"Product inventory record retained")});
 }
 function nextDocumentNumber(kind){
   const year=new Date().getFullYear();
@@ -802,12 +841,13 @@ function updateSalesDocStatus(type,id,status){const docs=type==="proforma"?state
 function sendDocumentLink(id,channel){const inv=state.invoices.find(x=>x.id===id);if(!inv)return;const subject=`Invoice ${inv.number} from ${state.settings.name}`,body=`Hello ${inv.customerName||""},\n\nPlease find invoice ${inv.number} for ${money(inv.total,inv.currency||state.settings.currency)}. Due date: ${inv.dueDate||"—"}.\n\nThank you, ${state.settings.name}.`;if(channel==="email"){if(!inv.customerEmail)return toast("This customer has no email address. Add one in Customers first.");window.location.href=`mailto:${encodeURIComponent(inv.customerEmail)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`}else{if(!inv.customerPhone)return toast("This customer has no phone number. Add one in Customers first.");const phone=inv.customerPhone.replace(/[^0-9]/g,"");window.open(`https://wa.me/${phone}?text=${encodeURIComponent(body)}`,"_blank","noopener")}}
 function voidInvoice(id){
   const inv=state.invoices.find(x=>x.id===id);if(!inv||inv.status==="Void")return;
-  modal(`<div class="modal-head"><div><div class="eyebrow">FINANCIAL CONTROL</div><h3>Void invoice ${esc(inv.number)}</h3></div><button class="close" data-close-modal>×</button></div><p class="muted">Voiding keeps this invoice and all payments in the audit history. Record a reason. Undelivered stock will be returned.</p><label>Reason for voiding<textarea id="voidReason" class="input" rows="3" placeholder="Required for your records"></textarea></label><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Keep invoice</button><button class="btn btn-danger" id="confirmVoidInvoice">Void invoice</button></div>`);
-  $("#confirmVoidInvoice").onclick=()=>{const reason=$("#voidReason").value.trim();if(!reason)return toast("Enter a reason for voiding this invoice.");mutate(()=>{if(inv.stockDeductedAtInvoice&&!inv.delivered){inv.items.forEach(x=>{const p=state.products.find(y=>y.id===x.productId);if(p)p.qty+=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))})}inv.voidedAt=new Date().toISOString();inv.voidReason=reason;inv.status="Void";inv.reserved=false},"Voided invoice",inv.number,reason);closeModal();toast(`${inv.number} voided. The record is retained.`)};
+  confirmAction({title:`Void invoice ${inv.number}?`,message:"This invoice and its payment history will remain in your records. Any undelivered stock deducted for this invoice will be returned. Enter a reason to continue.",confirmLabel:"Void invoice",reasonLabel:"Reason for voiding",reasonPlaceholder:"Required for your records",onConfirm:reason=>{mutate(()=>{if(inv.stockDeductedAtInvoice&&!inv.delivered){inv.items.forEach(x=>{const p=state.products.find(y=>y.id===x.productId);if(p)p.qty+=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))})}inv.voidedAt=new Date().toISOString();inv.voidReason=reason;inv.status="Void";inv.reserved=false},"Voided invoice",inv.number,reason);toast(`${inv.number} voided. The record is retained.`,"success")}});
 }
 function paymentMethodOptions(selected="Cash"){
-  return ["Cash","Mobile Money — MTN","Mobile Money — Telecel","Mobile Money — AirtelTigo","Bank Transfer"].map(m=>`<option ${m===selected?"selected":""}>${m}</option>`).join("");
+  const canonical=selected==="Mobile Money — MTN"?"MTN Mobile Money":selected;
+  return ["Cash","MTN Mobile Money","Mobile Money — Telecel","Mobile Money — AirtelTigo","Bank Transfer"].map(m=>`<option ${m===canonical?"selected":""}>${m}</option>`).join("");
 }
+function displayPaymentMethod(method){return method==="Mobile Money — MTN"?"MTN Mobile Money":method||"—"}
 function nextFinanceNumber(code,list){const year=new Date().getFullYear(),nums=list.map(x=>String(x.number||"")).filter(n=>n.includes(`${code}-${year}-`)).map(n=>Number(n.split("-").pop())||0);return `${code}-${year}-${String(Math.max(0,...nums)+1).padStart(4,"0")}`}
 function createReceipt(inv,amount,paymentMethod="Cash",date=today()){
   const receipt={id:uid("receipt"),number:nextFinanceNumber("REC",state.receipts),date,invoiceId:inv.id,invoiceNumber:inv.number,customerName:inv.customerName||"Customer",amount:round2(amount),balanceAfter:invoiceBalance(inv),paymentMethod,currency:inv.currency||state.settings.currency||"GHS"};
@@ -880,8 +920,7 @@ function openSupplierQuick(onSaved){
 function deleteSupplier(id){
   const supplier=state.suppliers.find(s=>s.id===id);if(!supplier)return;
   const linked=state.purchaseOrders.some(x=>x.supplierId===id)||state.purchaseInvoices.some(x=>x.supplierId===id);
-  if(linked)toast("This supplier is linked to purchase documents; the record will be archived for history.");
-  if(confirm(`Archive supplier ${supplier.name}?`))mutate(()=>supplier.deletedAt=new Date().toISOString(),"Archived supplier",supplier.name,linked?"Purchase history retained":"");
+  confirmAction({title:`Archive ${supplier.name}?`,message:linked?"This supplier is linked to purchase documents. The supplier will be hidden from active lists, and purchase history will remain available.":"This supplier will be hidden from active lists. The record will be retained.",confirmLabel:"Archive supplier",onConfirm:()=>mutate(()=>supplier.deletedAt=new Date().toISOString(),"Archived supplier",supplier.name,linked?"Purchase history retained":"")});
 }
 function purchaseSupplierOptions(selected=""){return `<select id="pSupplier" class="input"><option value="">Select supplier…</option>${state.suppliers.filter(s=>!s.deletedAt).map(s=>`<option value="${s.id}" ${s.id===selected?"selected":""}>${esc(s.name)}</option>`).join("")}</select><button class="btn btn-outline" type="button" id="addSupplierInline">+ Add supplier</button>`}
 function openPurchase(kind="order",sourceOrderId=null){
@@ -1019,15 +1058,15 @@ function completeWaybill(id){
 
 function openCash(){
   modal(`<div class="modal-head"><h3>Record Cash Transaction</h3><button class="close" data-close-modal>×</button></div>
-  <div class="form-stack"><label>Date<input id="tDate" type="date" class="input" value="${today()}"></label><label>Type<select id="tType" class="input"><option value="in">Cash in</option><option value="out">Cash out</option></select></label><label>Category<input id="tCat" class="input" placeholder="e.g. Purchase, Transport, Utilities"></label><label>Description<input id="tDesc" class="input"></label><label>Amount<input id="tAmount" type="number" min="0" step=".01" class="input"></label><label>Currency<select id="tCurrency" class="input">${["GHS","USD","EUR","NGN"].map(c=>`<option value="${c}" ${c===(state.settings.currency||"GHS")?"selected":""}>${c}</option>`).join("")}</select></label><label>Reference<input id="tRef" class="input"></label></div>
+  <div class="form-stack"><label>Date<input id="tDate" type="date" class="input" value="${today()}"></label><label>Type<select id="tType" class="input"><option value="in">Cash in</option><option value="out">Cash out</option></select></label><label>Category<input id="tCat" class="input" placeholder="e.g. Purchase, Transport, Utilities"></label><label>Description<input id="tDesc" class="input"></label><label>Amount<input id="tAmount" type="number" min="0" step=".01" class="input"></label><label>Currency<select id="tCurrency" class="input">${["GHS","USD","EUR","NGN"].map(c=>`<option value="${c}" ${c===(state.settings.currency||"GHS")?"selected":""}>${c}</option>`).join("")}</select></label><label>Payment method<select id="tPaymentMethod" class="input">${paymentMethodOptions()}</select></label><label>Reference<input id="tRef" class="input"></label></div>
   <div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="saveCashBtn">Save Transaction</button></div>`);
-  $("#saveCashBtn").onclick=()=>{const a=round2(+$("#tAmount").value||0);if(a<=0)return toast("Enter an amount.");const currency=$("#tCurrency").value||"GHS";mutate(()=>state.transactions.push({id:uid("tx"),date:$("#tDate").value,type:$("#tType").value,category:$("#tCat").value.trim(),description:$("#tDesc").value.trim(),amount:a,reference:$("#tRef").value.trim(),currency}),"Recorded cash transaction",$("#tRef").value.trim()||$("#tCat").value.trim(),`${$("#tType").value==="in"?"Cash in":"Cash out"} · ${money(a,currency)}`);closeModal()};
+  $("#saveCashBtn").onclick=()=>{const a=round2(+$("#tAmount").value||0);if(a<=0)return toast("Enter an amount.");const currency=$("#tCurrency").value||"GHS",reference=$("#tRef").value.trim(),category=$("#tCat").value.trim();mutate(()=>state.transactions.push({id:uid("tx"),date:$("#tDate").value,type:$("#tType").value,category,description:$("#tDesc").value.trim(),amount:a,reference,paymentMethod:$("#tPaymentMethod").value,currency}),"Recorded cash transaction",reference||category,`${$("#tType").value==="in"?"Cash in":"Cash out"} · ${money(a,currency)}`);closeModal()};
 }
 function deleteCash(id){
   const t=state.transactions.find(x=>x.id===id); if(!t)return;
-  if(t.reference && state.invoices.some(i=>i.number===t.reference)){toast("Delete protection: this transaction is linked to an invoice. Manage it from the invoice payment history.");return}
-  if(t.reference && state.purchaseInvoices.some(i=>i.number===t.reference)){toast("Delete protection: this transaction is linked to a supplier invoice. Manage it from the purchase invoice.");return}
-  if(confirm("Archive this transaction from active cash reports? The transaction record will be retained."))mutate(()=>t.deletedAt=new Date().toISOString(),"Archived cash transaction",t.reference||t.id,t.category||"");
+  if(t.reference && state.invoices.some(i=>i.number===t.reference)){toast("This transaction is linked to an invoice. Manage it from the invoice payment history.","error");return}
+  if(t.reference && state.purchaseInvoices.some(i=>i.number===t.reference)){toast("This transaction is linked to a supplier invoice. Manage it from the purchase invoice.","error");return}
+  confirmAction({title:"Archive this transaction?",message:"It will be hidden from active cash reports while the transaction record is retained in your history.",confirmLabel:"Archive transaction",onConfirm:()=>mutate(()=>t.deletedAt=new Date().toISOString(),"Archived cash transaction",t.reference||t.id,t.category||"")});
 }
 function openCustomer(id=null,onSaved=null){
   const c=id?state.customers.find(x=>x.id===id):null;
@@ -1042,15 +1081,13 @@ function openCustomerQuick(onSaved){
 function deleteCustomer(id){
   const c=state.customers.find(x=>x.id===id); if(!c)return;
   const linked=allDocuments().filter(d=>d.customerId===id);
-  if(linked.length){toast("This customer has linked documents, so the record will be archived for history.");}
-  if(confirm(`Archive customer ${c.name}? Linked records will be retained.`))mutate(()=>c.deletedAt=new Date().toISOString(),"Archived customer",c.name,`${linked.length} linked documents`);
+  confirmAction({title:`Archive ${c.name}?`,message:linked.length?`This customer has ${linked.length} linked document(s). The customer will be hidden from active lists, and the linked sales history will remain available.`:"This customer will be hidden from active lists. The record will be retained.",confirmLabel:"Archive customer",onConfirm:()=>mutate(()=>c.deletedAt=new Date().toISOString(),"Archived customer",c.name,`${linked.length} linked documents`)});
 }
 function deleteDocument(type,id){
   const collection=type==="Invoice"?state.invoices:type==="Estimate"?state.estimates:state.proformas;
   const d=collection.find(x=>x.id===id); if(!d)return;
   if(type==="Invoice"){toast("Invoices are never deleted. Use Void invoice and add a reason to preserve the financial history.");return;}
-  if(!confirm(`Archive ${d.number}? It will be hidden from active lists and retained in your Drive history.`))return;
-  mutate(()=>d.deletedAt=new Date().toISOString(),"Archived sales document",d.number,d.docType||type);
+  confirmAction({title:`Archive ${d.number}?`,message:"This document will be hidden from active lists and retained in your Drive history.",confirmLabel:"Archive document",onConfirm:()=>mutate(()=>d.deletedAt=new Date().toISOString(),"Archived sales document",d.number,d.docType||type)});
 }
 function printInvoice(id,receipt){const latest=receipt?state.receipts.filter(x=>x.invoiceId===id).sort((a,b)=>String(b.date||"").localeCompare(String(a.date||"")))[0]:null;return printDocument(id,receipt,latest)}
 function findDocument(id){return state.invoices.find(x=>x.id===id)||state.estimates.find(x=>x.id===id)||state.proformas.find(x=>x.id===id)}
@@ -1070,19 +1107,20 @@ async function printDocument(id,receipt=false,receiptRecord=null){
   const type=isInvoice?"SALES INVOICE":isEstimate?"QUOTATION / ESTIMATE":"PROFORMA INVOICE";
   const currency=i.currency||s.currency||"GHS",receiptAmount=Number(receiptRecord?.amount??i.paid??0),receiptBalance=Number(receiptRecord?.balanceAfter??invoiceBalance(i));
   const validUntil=i.validUntil || ((!isInvoice) ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
-  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.category||"")}</small></td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
+  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc([p?.category,p?.unit].filter(Boolean).join(" · "))}</small></td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
   const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
   const taxes=(i.taxEnabled===false||s.taxEnabled===false?[]:(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories))).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount,currency)}</strong></div>`).join("");
   const paid=Number(i.paid||0),balance=invoiceBalance(i),reserved=!i.delivered&&!i.stockDeducted&&paid>0,status=effectiveInvoiceStatus(i);
+  const printStatus=receipt?(receiptBalance<=0?"PAID":"PAYMENT RECEIVED"):isInvoice?String(status||"DRAFT").toUpperCase():String(i.status||(isEstimate?"ESTIMATE":"PROFORMA")).toUpperCase();
   $("#printArea").innerHTML=`<div class="print-document modern-document ${receipt?"receipt-document":""}">
     ${isInvoice&&!receipt&&["Paid","Overdue"].includes(status)?`<div class="print-watermark ${status.toLowerCase()}">${esc(status.toUpperCase())}</div>`:""}
-    <div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · Tax ID ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(receiptRecord?.number||i.number)}</strong><small>Issued ${esc(receiptRecord?.date||i.date||"")}${isInvoice&&i.dueDate&&!receipt?` · Due ${esc(i.dueDate)}`:""}${validUntil?` · Valid to ${esc(validUntil)}`:""}</small></div></div>
+    <div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}" alt="${esc(s.name)}"><div><span class="modern-location">ACCRA · GHANA</span><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · TIN ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(receiptRecord?.number||i.number)}</strong><em class="modern-status">${esc(printStatus)}</em><div class="modern-doc-dates"><span><small>ISSUED</small><strong>${esc(receiptRecord?.date||i.date||"")}</strong></span>${isInvoice&&i.dueDate&&!receipt?`<span><small>DUE DATE</small><strong>${esc(i.dueDate)}</strong></span>`:validUntil?`<span><small>VALID UNTIL</small><strong>${esc(validUntil)}</strong></span>`:""}</div></div></div>
     <div class="modern-accent"></div>
-    <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>Tax ID: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(reserved?"Reserved for delivery":status||"Quotation")}</strong>`}${isInvoice?receipt?`<span>Invoice: ${esc(i.number)}</span><span>Payment method: ${esc(receiptRecord?.paymentMethod||"—")}</span><span>Amount received: ${money(receiptAmount,currency)}</span><span>Balance after payment: ${money(receiptBalance,currency)}</span>`:`<span>Amount paid: ${money(paid,currency)}</span><span>Balance due: ${money(balance,currency)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
+    <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>TIN: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(reserved?"Reserved for delivery":status||"Quotation")}</strong>`}${isInvoice?receipt?`<span>Invoice: ${esc(i.number)}</span><span>Payment method: ${esc(displayPaymentMethod(receiptRecord?.paymentMethod))}</span><span>Amount received: ${money(receiptAmount,currency)}</span><span>Balance after payment: ${money(receiptBalance,currency)}</span>`:`<span>Amount paid: ${money(paid,currency)}</span><span>Balance due: ${money(balance,currency)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
     <table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th>SKU</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6">No line items</td></tr>`}</tbody></table>
     <div class="modern-summary"><div class="modern-terms">${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}${s.salesContract?`<div class="print-note"><strong>Sales terms</strong><div>${esc(s.salesContract)}</div></div>`:""}${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}${s.bankDetails?`<div class="print-note"><strong>Payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(i.subtotal,currency)}</strong></div><div><span>Discount</span><strong>− ${money(i.discount,currency)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery</span><strong>${money(i.deliveryCharge,currency)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge,currency)}</strong></div>`:""}${taxes}<div class="grand"><span>${receipt?"AMOUNT RECEIVED":"TOTAL DUE"}</span><strong>${money(receipt?receiptAmount:i.total,currency)}</strong></div>${isInvoice&&!receipt?`<div class="balance-row"><span>Amount paid</span><strong>${money(paid,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div>
     <div class="print-sign"><div>Prepared by <span></span></div><div>Customer acknowledgement <span></span></div></div>
-    <div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · ${esc(i.number)}</span></div>
+    <div class="print-footer"><span>${esc(s.footer||"Thank you for your business.")}</span><span>${esc(s.name)} · Accra, Ghana · ${esc(receiptRecord?.number||i.number)}</span></div>
   </div>`;
   await waitForPrintAssets();
   window.print();

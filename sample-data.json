@@ -34,18 +34,18 @@
     {"id":"demo-wb-1","number":"WB-2026-0001","date":"2026-10-13","direction":"outgoing","partyName":"Nana Osei Retail","sourceType":"invoice","sourceId":"demo-inv-nana","sourceNumber":"INV-2026-0002","items":[{"productId":"demo-prod-battery-5k","qty":1,"handledQty":0,"sourceItemId":"demo-l3"}],"status":"Prepared","carrier":"EVS delivery team","reference":"EVS-VAN-02","note":"Deliver to East Legon, Accra."}
   ],
   "receipts": [
-    {"id":"demo-rec-1","number":"REC-2026-0001","date":"2026-10-08","invoiceId":"demo-inv-kwame","invoiceNumber":"INV-2026-0001","customerName":"Kwame Enterprises Ltd","amount":5000,"balanceAfter":8806.25,"paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-rec-1","number":"REC-2026-0001","date":"2026-10-08","invoiceId":"demo-inv-kwame","invoiceNumber":"INV-2026-0001","customerName":"Kwame Enterprises Ltd","amount":5000,"balanceAfter":8806.25,"paymentMethod":"MTN Mobile Money","currency":"GHS"},
     {"id":"demo-rec-2","number":"REC-2026-0002","date":"2026-10-12","invoiceId":"demo-inv-nana","invoiceNumber":"INV-2026-0002","customerName":"Nana Osei Retail","amount":3500,"balanceAfter":10541.25,"paymentMethod":"Bank Transfer","currency":"GHS"}
   ],
   "creditNotes": [],
   "expenses": [
-    {"id":"demo-exp-1","number":"EXP-2026-0001","date":"2026-10-03","category":"Transport","vendor":"Accra Logistics","amount":480,"currency":"GHS","paymentMethod":"Mobile Money — MTN","reference":"AL-0428","description":"Local delivery fuel and dispatch."},
+    {"id":"demo-exp-1","number":"EXP-2026-0001","date":"2026-10-03","category":"Transport","vendor":"Accra Logistics","amount":480,"currency":"GHS","paymentMethod":"MTN Mobile Money","reference":"AL-0428","description":"Local delivery fuel and dispatch."},
     {"id":"demo-exp-2","number":"EXP-2026-0002","date":"2026-10-07","category":"Utilities","vendor":"Electricity Company of Ghana","amount":1260,"currency":"GHS","paymentMethod":"Bank Transfer","reference":"ECG-1007","description":"Workshop electricity bill."}
   ],
   "transactions": [
-    {"id":"demo-tx-1","date":"2026-10-08","type":"in","category":"Sales","description":"Payment for INV-2026-0001","amount":5000,"reference":"INV-2026-0001","paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-tx-1","date":"2026-10-08","type":"in","category":"Sales","description":"Payment for INV-2026-0001","amount":5000,"reference":"INV-2026-0001","paymentMethod":"MTN Mobile Money","currency":"GHS"},
     {"id":"demo-tx-2","date":"2026-10-12","type":"in","category":"Sales","description":"Payment for INV-2026-0002","amount":3500,"reference":"INV-2026-0002","paymentMethod":"Bank Transfer","currency":"GHS"},
-    {"id":"demo-tx-3","date":"2026-10-03","type":"out","category":"Transport","description":"Accra Logistics — Local delivery fuel and dispatch.","amount":480,"reference":"AL-0428","paymentMethod":"Mobile Money — MTN","currency":"GHS"},
+    {"id":"demo-tx-3","date":"2026-10-03","type":"out","category":"Transport","description":"Accra Logistics — Local delivery fuel and dispatch.","amount":480,"reference":"AL-0428","paymentMethod":"MTN Mobile Money","currency":"GHS"},
     {"id":"demo-tx-4","date":"2026-10-07","type":"out","category":"Utilities","description":"Electricity Company of Ghana — Workshop electricity bill.","amount":1260,"reference":"ECG-1007","paymentMethod":"Bank Transfer","currency":"GHS"}
   ],
   "settings": {"name":"EliteVolt Systems","phone":"+233 30 290 4750","email":"accounts@elitevolt.example","address":"Spintex Road, Accra, Greater Accra Region","tax":"C0007894561","prefix":"EVS","currency":"GHS","footer":"Thank you for powering Ghana with cleaner energy.","companyReg":"CS123456789","taxCategories":"NHIL 2.5%, GETFund 2.5%, VAT 12.5%","defaultTaxRate":0,"salesContract":"Equipment supply is subject to the stated warranty and delivery terms.","documentNotes":"","paymentTerms":"Payment due by the invoice due date. Mobile money and bank transfer accepted.","bankDetails":"GCB Bank · EliteVolt Systems · Account ending 8842\nMTN MoMo: 024 000 0000","documentValidityDays":14,"taxEnabled":true,"role":"Super Admin"}

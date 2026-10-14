@@ -9,6 +9,9 @@ EVS-Flow is a browser-based workspace for EliteVolt Systems in Ghana. It combine
 - Quote/estimate and proforma lifecycle (draft, sent, accepted, expired), direct sales invoice, and conversion to invoice. Invoice creation validates and deducts stock; waybill dispatch records delivery without deducting those same units twice.
 - Invoice balances, partial payments, automatic receipts, overdue status, credit notes, reason-required invoice voiding, and retained financial history.
 - Sales invoice email and WhatsApp draft links, duplicate-as-quote, live document preview, branded print layouts, and browser Print / Save as PDF.
+- Contextual empty states with quick actions, a Drive connection loading skeleton, accessible success/error toasts, and confirmation dialogs for archival and invoice voiding.
+- Payment method options include MTN Mobile Money across customer receipts, quote conversion, supplier payments, expenses, and cash transactions; older MTN entries display with the same label.
+- Print-ready invoice and receipt layouts use a clearer Accra business header, tax and registration details, due-date/status treatment, itemized pricing, payment details, and signature lines.
 - Purchase orders, supplier invoices, partial goods receiving, supplier payments, weighted-average item costs, purchase-to-waybill conversion, and standalone waybills / goods-received notes.
 - Ghana tax defaults (NHIL 2.5%, GETFund 2.5%, VAT 12.5%) with editable tax categories, and document currency selection for GHS, USD, EUR, and NGN.
 - Customer statements, CSV import/export, supplier history, stock adjustments, expenses with small receipt attachments, searchable audit history, report filters, CSV export for Excel, and print-to-PDF reports.
