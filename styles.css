@@ -234,6 +234,17 @@ body.editor-page-mode .modal-card{width:100%;height:100%;max-width:none;max-heig
 /* Keep long terms and notes flowing naturally across printed pages. Flex/grid
   fragmentation was leaving large blank areas when a terms block spanned pages. */
 @media print{
+  .modern-document{font-size:12pt!important}
+  .modern-address{font-size:12pt!important;line-height:1.45!important}
+  .modern-address strong{font-size:12pt!important}
+  .modern-table th,.modern-table td{font-size:12pt!important;line-height:1.4!important}
+  .modern-table td strong{font-size:12pt!important}
+  .modern-table td small,.modern-table .print-line-no{font-size:10pt!important}
+  .modern-document .print-note,.modern-document .print-note strong{font-size:12pt!important;line-height:1.5!important}
+  .modern-total,.modern-total .balance-row{font-size:12pt!important}
+  .modern-total .grand{font-size:12pt!important}
+  .modern-total .grand strong{font-size:16pt!important}
+  .document-purpose{font-size:12pt!important;line-height:1.5!important}
   .modern-summary{display:block!important;margin-top:14px!important;break-inside:auto!important;page-break-inside:auto!important}
   .modern-terms{display:block!important;width:100%!important}
   .modern-terms>.print-note{display:block!important;margin:0 0 8px!important;break-inside:auto!important;page-break-inside:auto!important}
