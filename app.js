@@ -685,8 +685,18 @@ window.addEventListener("message",async event=>{
   state=mergeEditorChanges(state,session.state,message.state);renderAll();scheduleSave();
   toast("Saved from the editor tab to your workspace.");
 });
+function presentEditorAsPage(){
+  if(!editorTabSession)return;
+  document.body.classList.add("editor-page-mode");
+  const card=$("#modalCard"),content=document.createElement("main"),header=document.createElement("header");content.className="editor-page-content";
+  while(card.firstChild)content.appendChild(card.firstChild);
+  const title=editorTabSession.kind==="product"?"Inventory editor":editorTabSession.kind==="purchase"?"Purchasing editor":"Sales document editor";
+  document.title=`${title} | ${state.settings.name||"EliteVolt Systems"}`;
+  header.className="editor-page-brand";header.innerHTML=`<div class="editor-page-brand-main"><img src="${businessLogoSource()}" alt=""><div><strong>${esc(state.settings.name||"EliteVolt Systems")}</strong><span>${esc(title)} <i>·</i> Saved changes return to your workspace</span></div></div><span class="editor-page-indicator"><b></b> WORKSPACE EDITOR</span>`;
+  card.append(header,content);
+}
 function modal(content){$("#modalCard").innerHTML=content;$("#modal").classList.remove("hidden")}
-function closeModal(){$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}
+function closeModal(){if(document.body.classList.contains("editor-page-mode")){setTimeout(()=>{window.close();setTimeout(()=>{if(!window.closed){document.body.classList.remove("editor-page-mode");$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}},100)},100);return}$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}
 document.addEventListener("click",e=>{if(e.target.matches("[data-close-modal]"))closeModal()});
 function confirmAction({title="Confirm action",message="Continue with this action?",confirmLabel="Confirm",reasonLabel="",reasonPlaceholder="",onConfirm}){
   modal(`<div class="confirm-dialog"><div class="confirm-icon">!</div><div class="modal-head"><div><div class="eyebrow">PLEASE CONFIRM</div><h3>${esc(title)}</h3></div><button class="close" data-close-modal aria-label="Close">×</button></div><p class="confirm-copy">${esc(message)}</p>${reasonLabel?`<label class="confirm-reason">${esc(reasonLabel)}<textarea id="confirmActionReason" class="input" rows="3" placeholder="${esc(reasonPlaceholder)}" required></textarea></label>`:""}<div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-danger" id="confirmActionBtn">${esc(confirmLabel)}</button></div></div>`);
@@ -993,19 +1003,16 @@ function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv
 function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),dueDate:kind==="invoice"?addDays(today(),30):"",validUntil:kind==="proforma"?addDays(today(),Number(state.settings.documentValidityDays||7)):undefined,currency:source.currency||state.settings.currency||"GHS",paid:kind==="invoice"?round2(paid):0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Partially Paid"):"Draft"):"Draft",delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number,taxEnabled:source.taxEnabled!==false};recalcDocument(inv);return inv}
 function convertToProforma(id){
   if(!editorTabSession){openEditorTab("convertProforma",{id});return}
-  const source=state.estimates.find(x=>x.id===id);if(!source)return;
-  if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");
-  const pro=copyForConversion(source,"proforma");
-  const warnings=stockAvailabilityWarnings(pro.items);
-  if(warnings.length && !confirm(`Stock alert:\n\n${warnings.join("\n")}\n\nConvert this quotation to a proforma invoice anyway?`)) return;
-  mutate(()=>{state.proformas.push(pro);source.convertedToNumber=pro.number;source.convertedAt=new Date().toISOString();source.status="Converted"},"Converted quote to proforma",source.number,pro.number);notifyEditorTabSaved();
-  closeModal();toast(`${source.number} converted to ${pro.number}. The original quote is retained in history.`);
+  const source=state.estimates.find(x=>x.id===id);if(!source){modal(`<div class="modal-head"><h3>Quotation unavailable</h3><button class="close" data-close-modal aria-label="Close">×</button></div><p class="muted">This quotation could not be found in the workspace.</p><div class="modal-footer"><button class="btn btn-primary" data-close-modal>Close editor</button></div>`);return}
+  if(!source.customerId){modal(`<div class="modal-head"><h3>Customer required</h3><button class="close" data-close-modal aria-label="Close">×</button></div><p class="muted">${esc(source.number)} does not have a customer. Add a customer to the quotation before creating a proforma invoice.</p><div class="modal-footer"><button class="btn btn-primary" data-close-modal>Close editor</button></div>`);return}
+  modal(`<div class="modal-head"><div><div class="eyebrow">DOCUMENT CONVERSION</div><h3>Convert quote to proforma</h3></div><button class="close" data-close-modal aria-label="Close">×</button></div><div class="conversion-summary"><span>Source quotation</span><strong>${esc(source.number)} · ${esc(source.customerName||"Customer")}</strong><small>${money(source.total,source.currency||state.settings.currency)} · ${source.items.length} line items</small></div><p class="muted">A new proforma invoice will be created with its own document number. The original quotation will remain in your records.</p><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="confirmProformaConversion">Create proforma invoice</button></div>`);
+  $("#confirmProformaConversion").onclick=()=>{const pro=copyForConversion(source,"proforma"),warnings=stockAvailabilityWarnings(pro.items);if(warnings.length&&!confirm(`Stock alert:\n\n${warnings.join("\n")}\n\nCreate this proforma invoice anyway?`))return;mutate(()=>{state.proformas.push(pro);source.convertedToNumber=pro.number;source.convertedAt=new Date().toISOString();source.status="Converted"},"Converted quote to proforma",source.number,pro.number);notifyEditorTabSaved();closeModal();toast(`${source.number} converted to ${pro.number}. The original quote is retained in history.`)};
 }
 function convertToInvoice(id){
   if(!editorTabSession){openEditorTab("convertInvoice",{id});return}
   const sourceType=state.estimates.some(x=>x.id===id)?"estimate":"proforma";
-  const source=sourceType==="estimate"?state.estimates.find(x=>x.id===id):state.proformas.find(x=>x.id===id);if(!source)return;
-  if(!source.customerId)return toast("This document has no customer. Add a customer before converting.");
+  const source=sourceType==="estimate"?state.estimates.find(x=>x.id===id):state.proformas.find(x=>x.id===id);if(!source){modal(`<div class="modal-head"><h3>Document unavailable</h3><button class="close" data-close-modal aria-label="Close">×</button></div><p class="muted">This sales document could not be found in the workspace.</p><div class="modal-footer"><button class="btn btn-primary" data-close-modal>Close editor</button></div>`);return}
+  if(!source.customerId){modal(`<div class="modal-head"><h3>Customer required</h3><button class="close" data-close-modal aria-label="Close">×</button></div><p class="muted">${esc(source.number)} does not have a customer. Add a customer to the sales document before converting it to an invoice.</p><div class="modal-footer"><button class="btn btn-primary" data-close-modal>Close editor</button></div>`);return}
   modal(`<div class="modal-head"><h3>Convert ${esc(source.number)} to Invoice</h3><button class="close" data-close-modal>×</button></div><div class="form-stack"><p class="muted">Customer: <strong>${esc(source.customerName)}</strong><br>Total: <strong>${money(source.total,source.currency||state.settings.currency)}</strong></p><label>Payment / part payment<input id="convertPaid" type="number" min="0" max="${source.total}" step=".01" class="input" value="0"></label><label>Payment method<select id="convertMethod" class="input">${paymentMethodOptions()}</select></label><label>Invoice date<input id="convertDate" type="date" class="input" value="${today()}"></label><p class="muted">Inventory is deducted when the invoice is created. Use its waybill to record delivery.</p></div><div class="modal-footer"><button class="btn btn-outline" data-close-modal>Cancel</button><button class="btn btn-primary" id="convertBtn">Create invoice</button></div>`);
   $("#convertBtn").onclick=()=>{
     const paid=Math.min(source.total,Math.max(0,+$("#convertPaid").value||0));
@@ -1308,12 +1315,12 @@ window.addEventListener("load",async()=>{
   if(sessionId){
     const session=await readEditorSession(sessionId);
     if(session?.state){
-      editorTabSession=session;state=mergeState(session.state);$("#connectDriveBtn").disabled=true;setDriveStatus("Editor tab",true);$("#driveDetails").textContent="Changes from this tab are saved locally and sent to the original workspace tab for cloud sync.";showApp();
-      if(session.kind==="product"){switchView("stock");renderProductEditor(session.options?.id||null)}
-      else if(session.kind==="sale"){switchView("sales");renderSaleEditor(session.options?.sourceId||null,!!session.options?.copyMode,session.options?.initialType||"estimate")}
-      else if(session.kind==="purchase"){switchView("purchases");renderPurchaseEditor(session.options?.kind||"order",session.options?.sourceOrderId||null)}
-      else if(session.kind==="convertProforma"){switchView("sales");convertToProforma(session.options?.id)}
-      else if(session.kind==="convertInvoice"){switchView("sales");convertToInvoice(session.options?.id)}
+      editorTabSession=session;state=mergeState(session.state);$("#connectDriveBtn").disabled=true;setDriveStatus("Editor tab",true);$("#driveDetails").textContent="Changes from this tab are saved locally and sent to the original workspace tab for cloud sync.";document.body.classList.add("editor-page-mode");showApp();
+      if(session.kind==="product"){switchView("stock");renderProductEditor(session.options?.id||null);presentEditorAsPage()}
+      else if(session.kind==="sale"){switchView("sales");renderSaleEditor(session.options?.sourceId||null,!!session.options?.copyMode,session.options?.initialType||"estimate");presentEditorAsPage()}
+      else if(session.kind==="purchase"){switchView("purchases");renderPurchaseEditor(session.options?.kind||"order",session.options?.sourceOrderId||null);presentEditorAsPage()}
+      else if(session.kind==="convertProforma"){switchView("sales");convertToProforma(session.options?.id);presentEditorAsPage()}
+      else if(session.kind==="convertInvoice"){switchView("sales");convertToInvoice(session.options?.id);presentEditorAsPage()}
       else{init();$("#connectDriveBtn").disabled=true}
       return;
     }
