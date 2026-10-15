@@ -632,8 +632,8 @@ function viewCustomerStatement(id){
 function renderReports(){
   const from=$("#reportFrom")?.value||"0000-01-01",to=$("#reportTo")?.value||"9999-12-31",currency=state.settings.currency||"GHS",invoices=state.invoices.filter(i=>i.date>=from&&i.date<=to&&i.status!=="Void"&&!i.voidedAt),expenses=state.expenses.filter(x=>!x.deletedAt&&x.date>=from&&x.date<=to&&(x.currency||currency)===currency);
   $("#rProducts").textContent=state.products.filter(p=>!p.deletedAt).length;$("#rUnits").textContent=state.products.filter(p=>!p.deletedAt).reduce((s,p)=>s+Number(p.qty||0),0);$("#rInvoices").textContent=invoices.length;$("#rCustomers").textContent=state.customers.filter(c=>!c.deletedAt).length;
-  const sold={};invoices.forEach(i=>i.items.forEach(x=>sold[x.productId]=(sold[x.productId]||0)+Number(x.qty||0)));
-  $("#topProducts").innerHTML=Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([id,q])=>{const p=state.products.find(p=>p.id===id);return `<div class="list-row"><div><strong>${esc(p?.name||"Deleted product")}</strong><small>${q} units sold</small></div></div>`}).join("")||`<div class="dashboard-empty"><strong>No product sales yet</strong><span>Sales by product will appear after your first invoice.</span><button type="button" class="link-btn" data-empty-action="invoice">Create an invoice</button></div>`;
+  const sold={};invoices.forEach(i=>i.items.forEach(x=>{const key=x.productId||`custom:${x.itemName||x.name||"Service"}`;sold[key]=(sold[key]||0)+Number(x.qty||0)}));
+  $("#topProducts").innerHTML=Object.entries(sold).sort((a,b)=>b[1]-a[1]).slice(0,10).map(([id,q])=>{const p=state.products.find(p=>p.id===id),name=p?.name||id.replace(/^custom:/,"");return `<div class="list-row"><div><strong>${esc(name||"Deleted product")}</strong><small>${q} units sold</small></div></div>`}).join("")||`<div class="dashboard-empty"><strong>No product sales yet</strong><span>Sales by product will appear after your first invoice.</span><button type="button" class="link-btn" data-empty-action="invoice">Create an invoice</button></div>`;
   const cat={};state.products.filter(p=>!p.deletedAt).forEach(p=>cat[p.category||"Other"]=(cat[p.category||"Other"]||0)+Number(p.qty||0));$("#categorySummary").innerHTML=Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="list-row"><strong>${esc(k)}</strong><span>${v} units</span></div>`).join("")||`<div class="dashboard-empty"><strong>No inventory categories</strong><span>Add products to organize stock and monitor value.</span><button type="button" class="link-btn" data-empty-action="product">Add a product</button></div>`;
   const sameCurrency=invoices.filter(i=>(i.currency||currency)===currency),revenue=sameCurrency.reduce((n,i)=>n+Number(i.total||0),0),cogs=sameCurrency.reduce((n,i)=>n+i.items.reduce((sum,x)=>sum+Number(x.qty||0)*Number(state.products.find(p=>p.id===x.productId)?.cost||0),0),0),expenseTotal=expenses.reduce((n,x)=>n+Number(x.amount||0),0),tax=sameCurrency.reduce((n,i)=>n+Number(i.taxTotal||0),0),debtors=sameCurrency.reduce((n,i)=>n+invoiceBalance(i),0),creditors=state.purchaseInvoices.filter(p=>(p.currency||currency)===currency).reduce((n,p)=>n+Math.max(0,Number(p.total||0)-Number(p.paid||0)),0),stock=state.products.filter(p=>!p.deletedAt).reduce((n,p)=>n+Number(p.qty||0)*Number(p.cost||0),0);
   $("#reportSalesTotal").textContent=money(revenue,currency);$("#reportCogs").textContent=money(cogs,currency);$("#reportExpenses").textContent=money(expenseTotal,currency);$("#reportProfit").textContent=money(revenue-cogs-expenseTotal,currency);$("#reportDebtors").textContent=money(debtors,currency);$("#reportCreditors").textContent=money(creditors,currency);$("#reportTax").textContent=money(tax,currency);$("#reportStockValue").textContent=money(stock,currency);
@@ -642,6 +642,49 @@ function renderSettings(){
   const s=state.settings;$("#setName").value=s.name;$("#setPhone").value=s.phone;$("#setEmail").value=s.email;$("#setAddress").value=s.address;$("#setTax").value=s.tax;$("#setPrefix").value=s.prefix;$("#setCurrency").value=s.currency==="GH₵"?"GHS":s.currency;$("#setFooter").value=s.footer;$("#setCompanyReg").value=s.companyReg||"";$("#setTaxCategories").value=s.taxCategories||"";$("#setDefaultTaxRate").value=s.defaultTaxRate??0;$("#setSalesContract").value=s.salesContract||"";$("#setDocumentNotes").value=s.documentNotes||"";$("#setPaymentTerms").value=s.paymentTerms||"";$("#setBankDetails").value=s.bankDetails||"";$("#setValidityDays").value=s.documentValidityDays??7;$("#setTaxEnabled").checked=s.taxEnabled!==false;$("#setRole").value=s.role||"Super Admin";const preview=$("#setLogoPreview");if(preview)preview.src=s.logoData||"assets/elitevolt-logo.png";
 }
 
+const EDITOR_SESSION_PREFIX="evs-flow-editor-session-v1:";
+let editorTabSession=null;
+const editorTabWindows=new Map();
+async function writeEditorSession(id,session){
+  const key=`editor:${id}`;
+  try{const db=await openLocalWorkspaceDb();await new Promise((resolve,reject)=>{const tx=db.transaction(LOCAL_DB_STORE,"readwrite");tx.objectStore(LOCAL_DB_STORE).put(session,key);tx.oncomplete=resolve;tx.onerror=()=>reject(tx.error);tx.onabort=()=>reject(tx.error||new Error("Editor session could not be saved"))})}
+  catch(e){localStorage.setItem(`${EDITOR_SESSION_PREFIX}${id}`,JSON.stringify(session))}
+}
+async function readEditorSession(id){
+  try{const db=await openLocalWorkspaceDb();const saved=await new Promise((resolve,reject)=>{const request=db.transaction(LOCAL_DB_STORE,"readonly").objectStore(LOCAL_DB_STORE).get(`editor:${id}`);request.onsuccess=()=>resolve(request.result||null);request.onerror=()=>reject(request.error)});if(saved)return saved}catch(e){console.warn("Editor tab session could not be read from local storage.",e)}
+  try{return JSON.parse(localStorage.getItem(`${EDITOR_SESSION_PREFIX}${id}`)||"null")}catch(e){return null}
+}
+function openEditorTab(kind,options={}){
+  const id=uid("editor"),tab=window.open("about:blank","_blank");
+  if(!tab){toast("Allow pop-ups for this site to open an editor in a new tab.","error");return false}
+  editorTabWindows.set(id,tab);
+  const session={id,kind,options,state:JSON.parse(JSON.stringify(state)),createdAt:Date.now()};
+  writeEditorSession(id,session).then(()=>{if(tab.closed)return;const url=new URL(location.href);url.searchParams.set("editorSession",id);tab.location.replace(url.href)}).catch(e=>{console.error(e);if(!tab.closed)tab.close();editorTabWindows.delete(id);toast("The editor tab could not be prepared. Try again.","error")});
+  return true;
+}
+function mergeEditorChanges(currentState,baselineState,updatedState){
+  const merged=mergeState(currentState),baseline=baselineState||{};
+  Object.keys(merged).filter(key=>Array.isArray(merged[key])&&Array.isArray(updatedState?.[key])).forEach(key=>{
+    const before=new Map((baseline[key]||[]).filter(x=>x?.id).map(x=>[x.id,x])),target=merged[key];
+    updatedState[key].forEach(item=>{
+      if(!item?.id)return;const original=before.get(item.id),changed=!original||JSON.stringify(original)!==JSON.stringify(item);if(!changed)return;
+      const index=target.findIndex(x=>x.id===item.id);if(index<0)target.push(item);else target[index]=item;
+    });
+    if(key==="auditLog")target.sort((a,b)=>String(b.date||"").localeCompare(String(a.date||""))).splice(500);
+  });
+  return merged;
+}
+function notifyEditorTabSaved(){
+  if(!editorTabSession||!window.opener||window.opener.closed)return;
+  try{window.opener.postMessage({type:"evs-flow-editor-saved",sessionId:editorTabSession.id,state:JSON.parse(JSON.stringify(state))},location.origin)}catch(e){console.warn("The original workspace tab could not be notified.",e)}
+}
+window.addEventListener("message",async event=>{
+  const message=event.data;if(event.origin!==location.origin||message?.type!=="evs-flow-editor-saved")return;
+  const tab=editorTabWindows.get(message.sessionId);if(!tab||event.source!==tab||!message.state)return;
+  const session=await readEditorSession(message.sessionId);if(!session?.state)return;
+  state=mergeEditorChanges(state,session.state,message.state);renderAll();scheduleSave();
+  toast("Saved from the editor tab to your workspace.");
+});
 function modal(content){$("#modalCard").innerHTML=content;$("#modal").classList.remove("hidden")}
 function closeModal(){$("#modal").classList.add("hidden");$("#modalCard").innerHTML=""}
 document.addEventListener("click",e=>{if(e.target.matches("[data-close-modal]"))closeModal()});
@@ -713,7 +756,8 @@ function openGlobalSearch(initial=""){
 $("#globalSearchBtn").onclick=()=>openGlobalSearch();
 window.addEventListener("keydown",e=>{if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==="k"){e.preventDefault();openGlobalSearch()}if(e.key==="Escape"&&!$("#modal").classList.contains("hidden"))closeModal()});
 
-function openProduct(id=null,onSaved=null){
+function openProduct(id=null,onSaved=null){if(onSaved){renderProductEditor(id,onSaved);return}openEditorTab("product",{id})}
+function renderProductEditor(id=null,onSaved=null){
   const p=id?state.products.find(x=>x.id===id):null;
   const existingSku=p?.sku||"";
   modal(`<div class="modal-head"><h3>${p?"Edit":"Add"} Product</h3><button class="close" data-close-modal>×</button></div>
@@ -766,6 +810,7 @@ function openProduct(id=null,onSaved=null){
     };
     mutate(()=>{if(p)Object.assign(p,obj);else state.products.push(obj)},p?"Updated inventory item":"Created inventory item",obj.sku,obj.name);
     closeModal();
+    notifyEditorTabSaved();
     if(onSaved) onSaved(obj.id);
   };
 }
@@ -797,10 +842,10 @@ function customerSnapshot(c){return {customerId:c?.id||"",customerName:c?.name||
 function customerSelectHtml(selected=""){
   return `<select id="sCustomer" class="input"><option value="">Select customer…</option>${state.customers.filter(c=>!c.deletedAt).map(c=>`<option value="${c.id}" ${c.id===selected?"selected":""}>${esc(c.name)}</option>`).join("")}</select><button type="button" class="btn btn-outline" id="addCustomerInline">+ Add customer</button>`;
 }
-function openSale(sourceId=null, copyMode=false, initialType="estimate"){
+function openSale(sourceId=null,copyMode=false,initialType="estimate"){openEditorTab("sale",{sourceId,copyMode,initialType})}
+function renderSaleEditor(sourceId=null, copyMode=false, initialType="estimate"){
   const source=sourceId?findDocument(sourceId):null;
   const sourceKind=source?(state.proformas.some(x=>x.id===source.id)?"proforma":"estimate"):"estimate";
-  if(!state.products.length){toast("Add products before creating a quotation.");return}
   const taxLabels=parseTaxCategories(state.settings.taxCategories);
   modal(`<div class="modal-head"><div><div class="eyebrow">SALES DOCUMENT</div><h3>${source && !copyMode ? "Edit " + esc(source.number) : "Create a document"}</h3></div><button class="close" data-close-modal>×</button></div>
   <div class="sale-composer"><div class="sale-fields">
@@ -825,29 +870,31 @@ function openSale(sourceId=null, copyMode=false, initialType="estimate"){
   $("#sCustomer").onchange=()=>{refreshCustomerInfo();updateTotal()};
   refreshCustomerInfo();
 
-  const productOptions=(selected="")=>`<option value="">Select item…</option>${state.products.map(p=>`<option value="${p.id}" ${p.id===selected?"selected":""}>${esc(p.name)} — ${availableQty(p.id)} available</option>`).join("")}`;
-  const addLine=(selectedId="", qty=1, linePrice=0, lineId="", itemDescription="")=>{
-    const row=document.createElement("div");row.className="product-line";row.dataset.lineId=lineId||uid("line");row.dataset.productId=selectedId;
-    const initialProduct=state.products.find(p=>p.id===selectedId),initialDescription=itemDescription||initialProduct?.description||"";
-    row.innerHTML=`<label class="line-field"><span>Item</span><select class="input line-product" aria-label="Product or service">${productOptions(selectedId)}</select></label><label class="line-field"><span>Quantity</span><input class="input line-qty" aria-label="Quantity" type="number" min="1" value="${qty}"></label><label class="line-field"><span>Unit price</span><input class="input line-price" aria-label="Unit price" type="number" min="0" step=".01" value="${linePrice}"></label><div class="line-sub-wrap"><small>Amount</small><span class="line-sub">${money(0)}</span></div><button class="icon-btn remove-line" type="button" aria-label="Remove item">×</button><textarea class="input line-description" rows="2" aria-label="Customer-facing item description" placeholder="Customer-facing description: scope, size, specification, or service included">${esc(initialDescription)}</textarea>`;
+  const productOptions=()=>state.products.filter(p=>!p.deletedAt).map(p=>`<option value="${esc(p.name)}" label="${esc(`${p.sku||""} · ${availableQty(p.id)} available`)}"></option><option value="${esc(p.sku||"")}" label="${esc(p.name)}"></option>`).join("");
+  const resolveLineProduct=value=>{const key=String(value||"").trim().toLowerCase();if(!key)return null;return state.products.find(p=>!p.deletedAt&&[p.name,p.sku,`${p.name} — ${p.sku}`].some(v=>String(v||"").trim().toLowerCase()===key))||null};
+  const addLine=(selectedId="",qty=1,linePrice=0,lineId="",itemDescription="",customName="")=>{
+    const row=document.createElement("div"),initialProduct=state.products.find(p=>p.id===selectedId),initialName=initialProduct?.name||customName||"";row.className="product-line";row.dataset.lineId=lineId||uid("line");row.dataset.productId=selectedId||"";row.dataset.itemName=initialName;
+    const initialDescription=itemDescription||initialProduct?.description||"";
+    row.innerHTML=`<label class="line-field"><span>Item</span><input class="input line-product" aria-label="Product or service" list="saleProductOptions" placeholder="Type a product, service, or SKU" value="${esc(initialName)}"></label><label class="line-field"><span>Quantity</span><input class="input line-qty" aria-label="Quantity" type="number" min="1" value="${qty}"></label><label class="line-field"><span>Unit price</span><input class="input line-price" aria-label="Unit price" type="number" min="0" step=".01" value="${linePrice}"></label><div class="line-sub-wrap"><small>Amount</small><span class="line-sub">${money(0)}</span></div><button class="icon-btn remove-line" type="button" aria-label="Remove item">×</button><textarea class="input line-description" rows="2" aria-label="Customer-facing item description" placeholder="Customer-facing description: scope, size, specification, or service included">${esc(initialDescription)}</textarea>`;
     $("#saleLines").appendChild(row);
-    const sel=row.querySelector(".line-product"),price=row.querySelector(".line-price");
-    const description=row.querySelector(".line-description");
-    const updatePrice=()=>{const p=state.products.find(p=>p.id===sel.value),productChanged=row.dataset.productId!==sel.value;if(productChanged||!Number(price.value))price.value=p?.price||0;if(productChanged||!description.value.trim()||description.dataset.autoDescription==="true"){description.value=p?.description||"";description.dataset.autoDescription="true"}row.dataset.productId=sel.value;updateTotal()};
-    sel.onchange=updatePrice;description.oninput=()=>{description.dataset.autoDescription="false";updateTotal()};row.oninput=updateTotal;row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};
-    if(selectedId) updatePrice(); else updateTotal();
+    const input=row.querySelector(".line-product"),price=row.querySelector(".line-price"),description=row.querySelector(".line-description");
+    if(selectedId&&!lineId&&!Number(linePrice))price.value=initialProduct?.price||0;
+    const updateSelection=()=>{const p=resolveLineProduct(input.value),nextId=p?.id||"",nextName=p?.name||input.value.trim(),changed=nextId!==row.dataset.productId||nextName!==row.dataset.itemName;if(p&&input.value!==p.name)input.value=p.name;if(changed){if(p)price.value=p.price||0;else if(row.dataset.productId)price.value="";description.value=p?.description||"";description.dataset.autoDescription="true"}row.dataset.productId=nextId;row.dataset.itemName=nextName;updateTotal()};
+    input.oninput=updateSelection;input.onchange=updateSelection;description.oninput=()=>{description.dataset.autoDescription="false";updateTotal()};row.oninput=updateTotal;row.querySelector(".remove-line").onclick=()=>{row.remove();updateTotal()};
+    if(selectedId||customName)updateSelection();else updateTotal();
   };
-  const refreshLineOptions=()=>{$$(".line-product").forEach(sel=>{const current=sel.value;sel.innerHTML=productOptions(current);});};
+  $("#saleLines").insertAdjacentHTML("beforebegin",`<datalist id="saleProductOptions">${productOptions()}</datalist>`);
+  const refreshLineOptions=()=>{$("#saleProductOptions").innerHTML=productOptions()};
   const updateTotal=()=>{
     const rows=$$(".product-line");
-    const items=rows.map(r=>({productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim()})).filter(x=>x.productId&&x.qty>0);
-    rows.forEach(r=>{const q=+r.querySelector('.line-qty').value||0,p=state.products.find(x=>x.id===r.querySelector('.line-product').value);r.querySelector('.line-sub').textContent=money(q*(+r.querySelector('.line-price').value||0));});
+    const items=rows.map(r=>{const selected=resolveLineProduct(r.querySelector('.line-product').value);return {productId:selected?.id||r.dataset.productId||"",itemName:selected?.name||r.querySelector('.line-product').value.trim(),qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim()}}).filter(x=>x.itemName&&x.qty>0);
+    rows.forEach(r=>{const q=+r.querySelector('.line-qty').value||0;r.querySelector('.line-sub').textContent=money(q*(+r.querySelector('.line-price').value||0));});
     const subtotal=round2(items.reduce((s,x)=>s+x.qty*x.price,0)),discountPercent=Math.min(100,Math.max(0,+$("#sDiscount").value||0)),discount=round2(Math.min(subtotal,subtotal*discountPercent/100)),delivery=+$("#sDelivery").value||0,labor=+$("#sLabor").value||0,base=Math.max(0,subtotal-discount+delivery+labor),tax=$("#sTaxEnabled").checked?taxBreakdown(base,state.settings.taxCategories).reduce((s,x)=>s+x.amount,0):0,currency=$("#sCurrency").value,total=round2(base+tax);
     $("#sDiscount").value=discountPercent; $("#discountPct").textContent=discountPercent.toFixed(2)+"%"; $("#taxSummary").textContent=$("#sTaxEnabled").checked?(taxLabels.length?taxLabels.map(x=>`${esc(x.name)} ${x.rate}%`).join(" + "):"No configured taxes"):"Taxes excluded";
     $("#saleTotal").textContent=money(total,currency);$("#previewTotal").textContent=money(total,currency);$("#previewSubtotal").textContent=money(subtotal,currency);$("#previewTaxes").textContent=money(tax,currency);$("#previewItems").textContent=String(items.reduce((n,x)=>n+x.qty,0));
     $("#previewType").textContent=$("#sDocType").selectedOptions[0]?.text.toUpperCase()||"QUOTE";$("#previewNumber").textContent=source&&!copyMode?`${source.number} · ${effectiveSalesDocStatus(source).toUpperCase()}`:$("#sDocType").value==="invoice"?"DRAFT INVOICE":"DRAFT QUOTATION";$("#previewDate").textContent=`${$("#sDate").value||today()} · Due ${$("#sDueDate").value||"—"}`;
     const customer=state.customers.find(x=>x.id===$("#sCustomer").value);$("#previewCustomer").textContent=customer?.name||"Select a customer";
-    $("#previewLineItems").innerHTML=items.length?items.slice(0,5).map(x=>{const p=state.products.find(y=>y.id===x.productId);return `<div><span>${esc(p?.name||"Item")} <small>× ${x.qty}</small>${x.description?`<small class="preview-item-description">${esc(x.description)}</small>`:""}</span><strong>${money(x.qty*x.price,currency)}</strong></div>`}).join("")+(items.length>5?`<small>+ ${items.length-5} more items</small>`:""):`<span>No items added</span>`;
+    $("#previewLineItems").innerHTML=items.length?items.slice(0,5).map(x=>`<div><span>${esc(x.itemName||"Item")} <small>× ${x.qty}</small>${x.description?`<small class="preview-item-description">${esc(x.description)}</small>`:""}</span><strong>${money(x.qty*x.price,currency)}</strong></div>`).join("")+(items.length>5?`<small>+ ${items.length-5} more items</small>`:""):`<span>No items added</span>`;
     const purpose=$("#sPurpose").value.trim();$("#previewPurpose").textContent=purpose;$("#previewPurpose").classList.toggle("hidden",!purpose||$("#sDocType").value==="invoice");$("#sPurposeWrap").classList.toggle("hidden",$("#sDocType").value==="invoice");
     const warnings=stockAvailabilityWarnings(items);
     const box=$("#stockWarning");
@@ -857,12 +904,12 @@ function openSale(sourceId=null, copyMode=false, initialType="estimate"){
   $("#quickAddStock").onclick=()=>openQuickProduct((newId)=>{refreshLineOptions();addLine(newId);});
   $("#sDiscount").oninput=updateTotal;$("#sDelivery").oninput=updateTotal;$("#sLabor").oninput=updateTotal;$("#sPurpose").oninput=updateTotal;$("#sTaxEnabled").onchange=updateTotal;$("#sCurrency").onchange=updateTotal;$("#sDate").onchange=updateTotal;$("#sDueDate").onchange=updateTotal;
   $("#sDocType").onchange=()=>{$("#saveSaleBtn").textContent=$("#sDocType").value==="invoice"?"Create invoice":"Save quote / estimate";updateTotal()};
-  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price,x.lineId,x.description));}else addLine();
+  if(source?.items?.length){source.items.forEach(x=>addLine(x.productId,x.qty,x.price,x.lineId,x.description,x.itemName||x.name||""));}else addLine();
 
   $("#saveSaleBtn").onclick=()=>{
     const c=state.customers.find(c=>c.id===$("#sCustomer").value);if(!c)return toast("Select or add a customer before saving the quotation.");
-    const items=$$(".product-line").map(r=>({lineId:r.dataset.lineId,productId:r.querySelector('.line-product').value,qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim(),deliveredQty:Number((source?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.deliveredQty||0)})).filter(x=>x.productId&&x.qty>0);
-    if(!items.length)return toast("Add at least one item and select each item.");
+    const items=$$(".product-line").map(r=>{const product=resolveLineProduct(r.querySelector('.line-product').value);return {lineId:r.dataset.lineId,productId:product?.id||r.dataset.productId||"",itemName:product?.name||r.querySelector('.line-product').value.trim(),qty:+r.querySelector('.line-qty').value||0,price:+r.querySelector('.line-price').value||0,description:r.querySelector('.line-description').value.trim(),deliveredQty:Number((source?.items||[]).find(x=>x.lineId===r.dataset.lineId)?.deliveredQty||0)}}).filter(x=>x.itemName&&x.qty>0);
+    if(!items.length)return toast("Add at least one item with a name and quantity.");
     const warnings=stockAvailabilityWarnings(items, source&&!copyMode?source.id:"");
     if(warnings.length && $("#sDocType").value!=="invoice" && !confirm(`Stock alert:
 
@@ -885,24 +932,24 @@ Save this quotation anyway?`)) return;
         else state.estimates=state.estimates.map(x=>x.id===source.id?doc:x);
       } else state.estimates.push(doc);
     },asInvoice?"Created sales invoice":source&&!copyMode?"Updated sales document":"Created quotation",doc.number,`${doc.customerName} · ${money(doc.total,doc.currency)}`);
-    closeModal();toast(asInvoice?`${doc.number} created. Stock has been deducted.`:source&&!copyMode?`${doc.number} updated.`:`${doc.number} saved.`);
+    closeModal();notifyEditorTabSaved();toast(asInvoice?`${doc.number} created. Stock has been deducted.`:source&&!copyMode?`${doc.number} updated.`:`${doc.number} saved.`);
   };
 }
 function openQuickProduct(onSaved){
   const wrap=document.createElement("div");wrap.className="submodal";wrap.innerHTML=`<div class="submodal-card"><div class="modal-head"><h3>Add Item to Stock</h3><button class="close" id="closeQuickProduct">×</button></div><div class="form-grid"><label>Product name<input id="qpName" class="input" placeholder="e.g. Solar Panel 550W"></label><label>Category<input id="qpCat" class="input" value="Solar / Electrical"></label><label class="product-description-field">Customer-facing description<textarea id="qpDescription" class="input" rows="2" placeholder="Key specifications or included service scope"></textarea></label><label>Unit<input id="qpUnit" class="input" value="pcs" placeholder="pcs, box, roll"></label><label>Barcode<input id="qpBarcode" class="input"></label><label>Opening quantity<input id="qpQty" type="number" min="0" class="input" value="0"></label><label>Minimum stock<input id="qpMin" type="number" min="0" class="input" value="2"></label><label>Cost price<input id="qpCost" type="number" min="0" step=".01" class="input" value="0"></label><label>Selling price<input id="qpPrice" type="number" min="0" step=".01" class="input" value="0"></label></div><div class="modal-footer"><button class="btn btn-outline" id="cancelQuickProduct">Cancel</button><button class="btn btn-primary" id="saveQuickProduct">Add Item</button></div></div>`;$("#modalCard").appendChild(wrap);
   const close=()=>wrap.remove();$("#closeQuickProduct").onclick=close;$("#cancelQuickProduct").onclick=close;
-  $("#saveQuickProduct").onclick=()=>{const name=$("#qpName").value.trim(),category=$("#qpCat").value.trim();if(!name||!category)return toast("Product name and category are required.");const obj={id:uid("prod"),name,description:$("#qpDescription").value.trim(),sku:makeSku(category,name),category,unit:$("#qpUnit").value.trim()||"pcs",barcode:$("#qpBarcode").value.trim(),qty:+$("#qpQty").value||0,minQty:+$("#qpMin").value||0,cost:+$("#qpCost").value||0,price:+$("#qpPrice").value||0};mutate(()=>state.products.push(obj),"Created inventory item",obj.sku,obj.name);close();onSaved&&onSaved(obj.id);};
+  $("#saveQuickProduct").onclick=()=>{const name=$("#qpName").value.trim(),category=$("#qpCat").value.trim();if(!name||!category)return toast("Product name and category are required.");const obj={id:uid("prod"),name,description:$("#qpDescription").value.trim(),sku:makeSku(category,name),category,unit:$("#qpUnit").value.trim()||"pcs",barcode:$("#qpBarcode").value.trim(),qty:+$("#qpQty").value||0,minQty:+$("#qpMin").value||0,cost:+$("#qpCost").value||0,price:+$("#qpPrice").value||0};mutate(()=>state.products.push(obj),"Created inventory item",obj.sku,obj.name);notifyEditorTabSaved();close();onSaved&&onSaved(obj.id);};
 }
 function deductDocumentStock(doc){
   if(doc.stockDeductedAtInvoice){doc.items.forEach(x=>x.deliveredQty=Number(x.qty||0));doc.delivered=true;doc.stockDeducted=true;doc.reserved=false;return;}
   if(doc.stockDeducted)return;
-  const totals={};doc.items.forEach(x=>{totals[x.productId]=(totals[x.productId]||0)+Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))});
+  const totals={};doc.items.forEach(x=>{if(x?.productId)totals[x.productId]=(totals[x.productId]||0)+Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0))});
   for(const [productId,remaining] of Object.entries(totals)){const p=state.products.find(p=>p.id===productId);if(!p||Number(p.qty)<remaining)throw new Error(`Insufficient physical stock for ${p?.name||"item"}.`)}
-  doc.items.forEach(x=>{const remaining=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0)),p=state.products.find(p=>p.id===x.productId);p.qty-=remaining;x.deliveredQty=Number(x.deliveredQty||0)+remaining});doc.stockDeducted=true;doc.delivered=true;doc.reserved=false;
+  doc.items.forEach(x=>{const remaining=Math.max(0,Number(x.qty||0)-Number(x.deliveredQty||0)),p=x.productId&&state.products.find(p=>p.id===x.productId);if(p)p.qty-=remaining;x.deliveredQty=Number(x.deliveredQty||0)+remaining});doc.stockDeducted=true;doc.delivered=true;doc.reserved=false;
 }
 function deductStockOnInvoice(doc){
   if(doc.stockDeductedAtInvoice)return;
-  const totals={};doc.items.forEach(x=>{totals[x.productId]=(totals[x.productId]||0)+Number(x.qty||0)});
+  const totals={};doc.items.forEach(x=>{if(x?.productId)totals[x.productId]=(totals[x.productId]||0)+Number(x.qty||0)});
   for(const [productId,qty] of Object.entries(totals)){const p=state.products.find(x=>x.id===productId);if(!p||Number(p.qty||0)<qty)throw new Error(`Insufficient stock for ${p?.name||"this product"}.`)}
   Object.entries(totals).forEach(([productId,qty])=>{const p=state.products.find(x=>x.id===productId);p.qty-=qty});
   doc.stockDeducted=true;doc.stockDeductedAtInvoice=true;doc.reserved=false;doc.delivered=false;
@@ -945,15 +992,17 @@ function recordPayment(id){
 function confirmDelivery(id){const inv=state.invoices.find(x=>x.id===id);if(!inv||inv.status==="Void")return;if(inv.delivered)return toast("Delivery is already confirmed.");if(!confirm(`Confirm that ${inv.number} has been delivered to ${inv.customerName}?`))return;try{mutate(()=>{deductDocumentStock(inv);inv.delivered=true;inv.status=Number(inv.paid||0)>=Number(inv.total||0)?"Paid":"Delivered"},"Confirmed invoice delivery",inv.number,inv.customerName||"");}catch(e){toast(e.message)}}
 function copyForConversion(source,kind,paid=0){const inv={...source,id:uid(kind),number:nextDocumentNumber(kind),date:today(),dueDate:kind==="invoice"?addDays(today(),30):"",validUntil:kind==="proforma"?addDays(today(),Number(state.settings.documentValidityDays||7)):undefined,currency:source.currency||state.settings.currency||"GHS",paid:kind==="invoice"?round2(paid):0,status:kind==="invoice"?(paid>0?(paid>=source.total?"Paid":"Partially Paid"):"Draft"):"Draft",delivered:false,stockDeducted:false,stockDeductedAtInvoice:false,reserved:false,sourceDocumentId:source.id,sourceDocumentNumber:source.number,taxEnabled:source.taxEnabled!==false};recalcDocument(inv);return inv}
 function convertToProforma(id){
+  if(!editorTabSession){openEditorTab("convertProforma",{id});return}
   const source=state.estimates.find(x=>x.id===id);if(!source)return;
   if(!source.customerId)return toast("This quotation has no customer. Add a customer before converting.");
   const pro=copyForConversion(source,"proforma");
   const warnings=stockAvailabilityWarnings(pro.items);
   if(warnings.length && !confirm(`Stock alert:\n\n${warnings.join("\n")}\n\nConvert this quotation to a proforma invoice anyway?`)) return;
-  mutate(()=>{state.proformas.push(pro);source.convertedToNumber=pro.number;source.convertedAt=new Date().toISOString();source.status="Converted"},"Converted quote to proforma",source.number,pro.number);
+  mutate(()=>{state.proformas.push(pro);source.convertedToNumber=pro.number;source.convertedAt=new Date().toISOString();source.status="Converted"},"Converted quote to proforma",source.number,pro.number);notifyEditorTabSaved();
   closeModal();toast(`${source.number} converted to ${pro.number}. The original quote is retained in history.`);
 }
 function convertToInvoice(id){
+  if(!editorTabSession){openEditorTab("convertInvoice",{id});return}
   const sourceType=state.estimates.some(x=>x.id===id)?"estimate":"proforma";
   const source=sourceType==="estimate"?state.estimates.find(x=>x.id===id):state.proformas.find(x=>x.id===id);if(!source)return;
   if(!source.customerId)return toast("This document has no customer. Add a customer before converting.");
@@ -971,6 +1020,7 @@ function convertToInvoice(id){
         source.convertedToNumber=inv.number;source.convertedAt=new Date().toISOString();source.status="Converted";
         if(paid>0){state.transactions.push({id:uid("tx"),date:inv.date,type:"in",category:"Sales",description:`Payment for ${inv.number}`,amount:paid,reference:inv.number,paymentMethod:$("#convertMethod").value,currency:inv.currency});createReceipt(inv,paid,$("#convertMethod").value,inv.date);}
       },"Converted sales document to invoice",source.number,inv.number);
+      notifyEditorTabSaved();
       closeModal();toast(`${source.number} converted to ${inv.number}. The original document is retained in history.`);
     }catch(e){toast(e.message)}
   };
@@ -1007,7 +1057,8 @@ function deleteSupplier(id){
   confirmAction({title:`Archive ${supplier.name}?`,message:linked?"This supplier is linked to purchase documents. The supplier will be hidden from active lists, and purchase history will remain available.":"This supplier will be hidden from active lists. The record will be retained.",confirmLabel:"Archive supplier",onConfirm:()=>mutate(()=>supplier.deletedAt=new Date().toISOString(),"Archived supplier",supplier.name,linked?"Purchase history retained":"")});
 }
 function purchaseSupplierOptions(selected=""){return `<select id="pSupplier" class="input"><option value="">Select supplier…</option>${state.suppliers.filter(s=>!s.deletedAt).map(s=>`<option value="${s.id}" ${s.id===selected?"selected":""}>${esc(s.name)}</option>`).join("")}</select><button class="btn btn-outline" type="button" id="addSupplierInline">+ Add supplier</button>`}
-function openPurchase(kind="order",sourceOrderId=null){
+function openPurchase(kind="order",sourceOrderId=null){openEditorTab("purchase",{kind,sourceOrderId})}
+function renderPurchaseEditor(kind="order",sourceOrderId=null){
   const isInvoice=kind==="invoice",sourceOrder=sourceOrderId?state.purchaseOrders.find(x=>x.id===sourceOrderId):null;
   const orderOptions=`<option value="">No linked purchase order</option>${state.purchaseOrders.filter(o=>!state.purchaseInvoices.some(p=>p.sourceOrderId===o.id)||o.id===sourceOrderId).map(o=>`<option value="${o.id}" ${o.id===sourceOrderId?"selected":""}>${esc(o.number)} — ${esc(o.supplierName||"Supplier")}</option>`).join("")}`;
   modal(`<div class="modal-head"><div><h3>New ${isInvoice?"Purchase Invoice":"Purchase Order"}</h3><small class="muted">${isInvoice?"Record a supplier bill; receive stock when goods arrive.":"Plan and print an order for your supplier."}</small></div><button class="close" data-close-modal>×</button></div>
@@ -1041,7 +1092,7 @@ function openPurchase(kind="order",sourceOrderId=null){
     const doc={id:uid(isInvoice?"purchase_invoice":"purchase_order"),number:nextOperationalNumber(isInvoice?"purchaseInvoice":"purchaseOrder"),date:$("#pDate").value||today(),dueDate:isInvoice?$("#pDueDate").value:"",currency:$("#pCurrency").value||"GHS",reference:$("#pReference").value.trim(),items,subtotal:round2(subtotal),discount:round2(discount),otherCharges:round2(charges),tax:round2(tax),total:round2(Math.max(0,subtotal-discount)+charges+tax),note:$("#pNote").value.trim(),...supplierSnapshot(supplier)};
     if(isInvoice){doc.paid=0;doc.status="Unpaid";doc.sourceOrderId=$("#pSourceOrder")?.value||"";doc.received=items.every(x=>Number(x.receivedQty||0)>=x.qty);doc.receiptStatus=doc.received?"Received":items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Awaiting goods";mutate(()=>{state.purchaseInvoices.push(doc);const order=state.purchaseOrders.find(x=>x.id===doc.sourceOrderId);if(order){order.status=order.items.every(x=>Number(x.receivedQty||0)>=x.qty)?"Received":order.items.some(x=>Number(x.receivedQty||0)>0)?"Partially received":"Invoiced";}});}
     else{doc.status="Ordered";doc.instructions=$("#pInstructions").value.trim();doc.items=items.map(x=>({...x,receivedQty:0}));mutate(()=>state.purchaseOrders.push(doc));}
-    closeModal();toast(`${doc.number} saved.`);
+    closeModal();notifyEditorTabSaved();toast(`${doc.number} saved.`);
   };
 }
 function recordPurchasePayment(id){
@@ -1192,19 +1243,19 @@ async function printDocument(id,receipt=false,receiptRecord=null){
   const type=isInvoice?"SALES INVOICE":isEstimate?"QUOTATION / ESTIMATE":"PROFORMA INVOICE";
   const currency=i.currency||s.currency||"GHS",receiptAmount=Number(receiptRecord?.amount??i.paid??0),receiptBalance=Number(receiptRecord?.balanceAfter??invoiceBalance(i));
   const validUntil=i.validUntil || ((!isInvoice) ? addDays(i.date || today(), Number(s.documentValidityDays||7)) : "");
-  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId),description=x.description||p?.description||[p?.category,p?.unit].filter(Boolean).join(" · ");return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong>${description?`<small class="item-description">${esc(description)}</small>`:""}</td><td>${esc(p?.sku||"—")}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
+  const rows=i.items.map((x,index)=>{const p=state.products.find(p=>p.id===x.productId),description=x.description||p?.description||"";return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(x.itemName||x.name||p?.name||"Item")}</strong>${description?`<small class="item-description">${esc(description)}</small>`:""}</td><td class="num">${x.qty}</td><td class="num">${money(x.price,currency)}</td><td class="num"><strong>${money(x.qty*x.price,currency)}</strong></td></tr>`}).join("");
   const customerAddress=i.customerBillingAddress||"",shipping=i.customerShippingAddress||"";
   const taxes=(i.taxEnabled===false||s.taxEnabled===false?[]:(i.taxLines||taxBreakdown(documentTaxBase(i),s.taxCategories))).map(t=>`<div><span>${esc(t.name)} (${t.rate}%)</span><strong>${money(t.amount,currency)}</strong></div>`).join("");
   const paid=Number(i.paid||0),balance=invoiceBalance(i),reserved=!i.delivered&&!i.stockDeducted&&paid>0,status=isInvoice?effectiveInvoiceStatus(i):effectiveSalesDocStatus(i);
-  const printStatus=receipt?(receiptBalance<=0?"PAID":"PAYMENT RECEIVED"):String(status||"DRAFT").toUpperCase();
+  const printStatus=receipt?(receiptBalance<=0?"PAID":"PAYMENT RECEIVED"):isInvoice?String(status||"DRAFT").toUpperCase():"";
   $("#printArea").innerHTML=`<div class="print-document modern-document ${receipt?"receipt-document":""}">
     ${isInvoice&&!receipt&&["Paid","Overdue"].includes(status)?`<div class="print-watermark ${status.toLowerCase()}">${esc(status.toUpperCase())}</div>`:""}
-    <div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}" alt="${esc(s.name)}"><div><span class="modern-location">ACCRA · GHANA</span><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · TIN ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(receiptRecord?.number||i.number)}</strong><em class="modern-status">${esc(printStatus)}</em><div class="modern-doc-dates"><span><small>ISSUED</small><strong>${esc(receiptRecord?.date||i.date||"")}</strong></span>${isInvoice&&i.dueDate&&!receipt?`<span><small>DUE DATE</small><strong>${esc(i.dueDate)}</strong></span>`:validUntil?`<span><small>VALID UNTIL</small><strong>${esc(validUntil)}</strong></span>`:""}</div></div></div>
+    <div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}" alt="${esc(s.name)}"><div><span class="modern-location">ACCRA · GHANA</span><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p><p>${s.companyReg?`Reg. ${esc(s.companyReg)}`:""}${s.tax?` · TIN ${esc(s.tax)}`:""}</p></div></div><div class="modern-doc-ref"><span>${receipt?"PAYMENT RECEIPT":type}</span><strong>${esc(receiptRecord?.number||i.number)}</strong>${printStatus?`<em class="modern-status">${esc(printStatus)}</em>`:""}<div class="modern-doc-dates"><span><small>ISSUED</small><strong>${esc(receiptRecord?.date||i.date||"")}</strong></span>${isInvoice&&i.dueDate&&!receipt?`<span><small>DUE DATE</small><strong>${esc(i.dueDate)}</strong></span>`:validUntil?`<span><small>VALID UNTIL</small><strong>${esc(validUntil)}</strong></span>`:""}</div></div></div>
     <div class="modern-accent"></div>
-    <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>TIN: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(reserved?"Reserved for delivery":status||"Quotation")}</strong>`}${isInvoice?receipt?`<span>Invoice: ${esc(i.number)}</span><span>Payment method: ${esc(displayPaymentMethod(receiptRecord?.paymentMethod))}</span><span>Amount received: ${money(receiptAmount,currency)}</span><span>Balance after payment: ${money(receiptBalance,currency)}</span>`:`<span>Amount paid: ${money(paid,currency)}</span><span>Balance due: ${money(balance,currency)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
+    <div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${isInvoice?"BILL TO":"PREPARED FOR"}</span><strong>${esc(i.customerName||"Customer not specified")}</strong>${i.customerContactPerson?`<span>${esc(i.customerContactPerson)}</span>`:""}${customerAddress?`<span>${esc(customerAddress)}</span>`:""}${i.customerPhone?`<span>${esc(i.customerPhone)}</span>`:""}${i.customerEmail?`<span>${esc(i.customerEmail)}</span>`:""}${i.customerTaxId?`<span>TIN: ${esc(i.customerTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${shipping?"DELIVER TO":"DOCUMENT DETAILS"}</span>${shipping?`<strong>${esc(i.customerName||"")}</strong><span>${esc(shipping)}</span>`:`<strong>${esc(isInvoice?status:(reserved?"Reserved for delivery":type))}</strong>`}${isInvoice?receipt?`<span>Invoice: ${esc(i.number)}</span><span>Payment method: ${esc(displayPaymentMethod(receiptRecord?.paymentMethod))}</span><span>Amount received: ${money(receiptAmount,currency)}</span><span>Balance after payment: ${money(receiptBalance,currency)}</span>`:`<span>Amount paid: ${money(paid,currency)}</span><span>Balance due: ${money(balance,currency)}</span>`:""}${i.sourceDocumentNumber?`<span>Based on ${esc(i.sourceDocumentNumber)}</span>`:""}</div></div>
     ${!receipt&&i.purpose?`<div class="document-purpose"><strong>PROPOSAL / PROJECT SUMMARY</strong><p>${esc(i.purpose)}</p></div>`:""}
-    <table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th>SKU</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6">No line items</td></tr>`}</tbody></table>
-    <div class="modern-summary"><div class="modern-terms">${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}${s.salesContract?`<div class="print-note"><strong>Sales terms</strong><div>${esc(s.salesContract)}</div></div>`:""}${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}${s.bankDetails?`<div class="print-note"><strong>Payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(i.subtotal,currency)}</strong></div><div><span>Discount</span><strong>− ${money(i.discount,currency)}</strong></div>${Number(i.deliveryCharge||0)?`<div><span>Delivery</span><strong>${money(i.deliveryCharge,currency)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge,currency)}</strong></div>`:""}${taxes}<div class="grand"><span>${receipt?"AMOUNT RECEIVED":"TOTAL DUE"}</span><strong>${money(receipt?receiptAmount:i.total,currency)}</strong></div>${isInvoice&&!receipt?`<div class="balance-row"><span>Amount paid</span><strong>${money(paid,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div>
+    <table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit price</th><th class="num">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="5">No line items</td></tr>`}</tbody></table>
+    <div class="modern-summary"><div class="modern-terms">${s.paymentTerms?`<div class="print-note"><strong>Payment terms</strong><div>${esc(s.paymentTerms)}</div></div>`:""}${s.salesContract?`<div class="print-note"><strong>Sales terms</strong><div>${esc(s.salesContract)}</div></div>`:""}${i.note?`<div class="print-note"><strong>Notes</strong><div>${esc(i.note)}</div></div>`:""}${s.bankDetails?`<div class="print-note"><strong>Payment details</strong><div>${esc(s.bankDetails)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(i.subtotal,currency)}</strong></div>${Number(i.discount||0)>0?`<div><span>Discount</span><strong>− ${money(i.discount,currency)}</strong></div>`:""}${Number(i.deliveryCharge||0)?`<div><span>Delivery</span><strong>${money(i.deliveryCharge,currency)}</strong></div>`:""}${Number(i.laborCharge||0)?`<div><span>Installation / labour</span><strong>${money(i.laborCharge,currency)}</strong></div>`:""}${taxes}<div class="grand"><span>${receipt?"AMOUNT RECEIVED":"TOTAL DUE"}</span><strong>${money(receipt?receiptAmount:i.total,currency)}</strong></div>${isInvoice&&!receipt?`<div class="balance-row"><span>Amount paid</span><strong>${money(paid,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div>
     <div class="print-sign"><div>Prepared by <span></span></div><div>Customer acknowledgement <span></span></div></div>
     <div class="print-footer"><span>${esc(s.footer||"Thank you for your business.")}</span><span>${esc(s.name)} · Accra, Ghana · ${esc(receiptRecord?.number||i.number)}</span></div>
   </div>`;
@@ -1216,14 +1267,14 @@ async function printCreditNote(id){const note=state.creditNotes.find(x=>x.id===i
 
 async function printPurchase(kind,id){
   const invoice=kind==="invoice",doc=(invoice?state.purchaseInvoices:state.purchaseOrders).find(x=>x.id===id);if(!doc)return;const s=state.settings;
-  const currency=doc.currency||"GHS",rows=doc.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.sku||"")}</small></td><td class="num">${x.qty}</td><td class="num">${money(x.cost,currency)}</td><td class="num">${money(x.qty*x.cost,currency)}</td></tr>`}).join("");
+  const currency=doc.currency||"GHS",rows=doc.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(x.itemName||x.name||p?.name||"Item")}</strong>${x.description||p?.description?`<small class="item-description">${esc(x.description||p?.description)}</small>`:""}</td><td class="num">${x.qty}</td><td class="num">${money(x.cost,currency)}</td><td class="num">${money(x.qty*x.cost,currency)}</td></tr>`}).join("");
   const balance=Math.max(0,Number(doc.total||0)-Number(doc.paid||0));
-  $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>${invoice?"PURCHASE INVOICE":"PURCHASE ORDER"}</span><strong>${esc(doc.number)}</strong><small>${invoice?`Supplier ref. ${esc(doc.reference||"—")}`:`Date ${esc(doc.date||"")}`}</small></div></div><div class="modern-accent"></div><div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">SUPPLIER</span><strong>${esc(doc.supplierName||"Supplier")}</strong>${doc.supplierContactPerson?`<span>${esc(doc.supplierContactPerson)}</span>`:""}${doc.supplierAddress?`<span>${esc(doc.supplierAddress)}</span>`:""}${doc.supplierPhone?`<span>${esc(doc.supplierPhone)}</span>`:""}${doc.supplierEmail?`<span>${esc(doc.supplierEmail)}</span>`:""}${doc.supplierTaxId?`<span>Tax ID: ${esc(doc.supplierTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${invoice?"BILL DETAILS":"DELIVER TO"}</span><strong>${esc(s.name)}</strong><span>${esc(s.address||"")}</span><span>${invoice?`Invoice date: ${esc(doc.date||"")}`:`Expected: ${esc(doc.date||"")}`}</span>${invoice&&doc.dueDate?`<span>Due date: ${esc(doc.dueDate)}</span>`:""}<span>Status: ${esc(doc.status||"Draft")}</span>${doc.sourceOrderId?`<span>Purchase order: ${esc(state.purchaseOrders.find(x=>x.id===doc.sourceOrderId)?.number||"")}</span>`:""}</div></div><table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table><div class="modern-summary"><div class="modern-terms">${doc.note?`<div class="print-note"><strong>Notes</strong><div>${esc(doc.note)}</div></div>`:""}${doc.instructions?`<div class="print-note"><strong>Delivery instructions</strong><div>${esc(doc.instructions)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(doc.subtotal,currency)}</strong></div><div><span>Discount</span><strong>− ${money(doc.discount,currency)}</strong></div>${Number(doc.otherCharges||0)?`<div><span>Other charges</span><strong>${money(doc.otherCharges,currency)}</strong></div>`:""}${Number(doc.tax||0)?`<div><span>Supplier tax / duty</span><strong>${money(doc.tax,currency)}</strong></div>`:""}<div class="grand"><span>${invoice?"INVOICE TOTAL":"ORDER TOTAL"}</span><strong>${money(doc.total,currency)}</strong></div>${invoice?`<div class="balance-row"><span>Paid</span><strong>${money(doc.paid||0,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div><div class="print-sign"><div>Authorized by <span></span></div><div>Supplier acknowledgement <span></span></div></div><div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · ${esc(doc.number)}</span></div></div>`;
+  $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>${invoice?"PURCHASE INVOICE":"PURCHASE ORDER"}</span><strong>${esc(doc.number)}</strong><small>${invoice?`Supplier ref. ${esc(doc.reference||"—")}`:`Date ${esc(doc.date||"")}`}</small></div></div><div class="modern-accent"></div><div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">SUPPLIER</span><strong>${esc(doc.supplierName||"Supplier")}</strong>${doc.supplierContactPerson?`<span>${esc(doc.supplierContactPerson)}</span>`:""}${doc.supplierAddress?`<span>${esc(doc.supplierAddress)}</span>`:""}${doc.supplierPhone?`<span>${esc(doc.supplierPhone)}</span>`:""}${doc.supplierEmail?`<span>${esc(doc.supplierEmail)}</span>`:""}${doc.supplierTaxId?`<span>Tax ID: ${esc(doc.supplierTaxId)}</span>`:""}</div><div class="modern-address"><span class="print-eyebrow">${invoice?"BILL DETAILS":"DELIVER TO"}</span><strong>${esc(s.name)}</strong><span>${esc(s.address||"")}</span><span>${invoice?`Invoice date: ${esc(doc.date||"")}`:`Expected: ${esc(doc.date||"")}`}</span>${invoice&&doc.dueDate?`<span>Due date: ${esc(doc.dueDate)}</span>`:""}${doc.status&&doc.status!=="Approved"?`<span>Status: ${esc(doc.status)}</span>`:""}${doc.sourceOrderId?`<span>Purchase order: ${esc(state.purchaseOrders.find(x=>x.id===doc.sourceOrderId)?.number||"")}</span>`:""}</div></div><table class="print-table modern-table"><thead><tr><th>#</th><th>Description</th><th class="num">Qty</th><th class="num">Unit cost</th><th class="num">Amount</th></tr></thead><tbody>${rows}</tbody></table><div class="modern-summary"><div class="modern-terms">${doc.note?`<div class="print-note"><strong>Notes</strong><div>${esc(doc.note)}</div></div>`:""}${doc.instructions?`<div class="print-note"><strong>Delivery instructions</strong><div>${esc(doc.instructions)}</div></div>`:""}</div><div class="print-total modern-total"><div><span>Subtotal</span><strong>${money(doc.subtotal,currency)}</strong></div>${Number(doc.discount||0)>0?`<div><span>Discount</span><strong>− ${money(doc.discount,currency)}</strong></div>`:""}${Number(doc.otherCharges||0)?`<div><span>Other charges</span><strong>${money(doc.otherCharges,currency)}</strong></div>`:""}${Number(doc.tax||0)?`<div><span>Supplier tax / duty</span><strong>${money(doc.tax,currency)}</strong></div>`:""}<div class="grand"><span>${invoice?"INVOICE TOTAL":"ORDER TOTAL"}</span><strong>${money(doc.total,currency)}</strong></div>${invoice?`<div class="balance-row"><span>Paid</span><strong>${money(doc.paid||0,currency)}</strong></div><div class="balance-row"><span>Balance due</span><strong>${money(balance,currency)}</strong></div>`:""}</div></div><div class="print-sign"><div>Authorized by <span></span></div><div>Supplier acknowledgement <span></span></div></div><div class="print-footer"><span>${esc(s.footer)}</span><span>${esc(s.name)} · ${esc(doc.number)}</span></div></div>`;
   await waitForPrintAssets();window.print();
 }
 async function printWaybill(id){
   const wb=state.waybills.find(x=>x.id===id);if(!wb)return;const s=state.settings;
-  const rows=wb.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(p?.name||"Item")}</strong><small>${esc(p?.sku||"")}</small></td><td class="num">${x.qty}</td><td class="num">${Number(x.handledQty||0)}</td><td></td></tr>`}).join("");
+  const rows=wb.items.map((x,index)=>{const p=state.products.find(y=>y.id===x.productId);return `<tr><td class="print-line-no">${String(index+1).padStart(2,"0")}</td><td><strong>${esc(x.itemName||x.name||p?.name||"Item")}</strong>${x.description||p?.description?`<small class="item-description">${esc(x.description||p?.description)}</small>`:""}</td><td class="num">${x.qty}</td><td class="num">${Number(x.handledQty||0)}</td><td></td></tr>`}).join("");
   $("#printArea").innerHTML=`<div class="print-document modern-document"><div class="modern-print-head"><div class="modern-company"><img src="${businessLogoSource()}"><div><h1>${esc(s.name)}</h1><p>${esc(s.address||"")}</p><p>${esc(s.phone||"")}${s.email?` · ${esc(s.email)}`:""}</p></div></div><div class="modern-doc-ref"><span>${wb.direction==="incoming"?"GOODS RECEIVED NOTE":"DELIVERY WAYBILL"}</span><strong>${esc(wb.number)}</strong><small>${esc(wb.date||"")}</small></div></div><div class="modern-accent"></div><div class="modern-address-grid"><div class="modern-address"><span class="print-eyebrow">${wb.direction==="incoming"?"RECEIVED FROM":"DELIVER TO"}</span><strong>${esc(wb.partyName||"")}</strong><span>${esc(wb.carrier||"")}</span><span>${esc(wb.reference||"")}</span></div><div class="modern-address"><span class="print-eyebrow">WAYBILL DETAILS</span><strong>${esc(wb.status||"Prepared")}</strong><span>Source: ${esc(wb.sourceNumber||"Standalone")}</span>${wb.note?`<span>${esc(wb.note)}</span>`:""}</div></div><table class="print-table modern-table"><thead><tr><th>#</th><th>Goods description</th><th class="num">Qty planned</th><th class="num">Qty handled</th><th>Condition / remarks</th></tr></thead><tbody>${rows}</tbody></table><div class="waybill-signatures"><div>Dispatched / received by <span></span></div><div>Driver / carrier <span></span></div><div>Customer / storekeeper <span></span></div></div><div class="print-footer"><span>Please verify quantities and condition on receipt.</span><span>${esc(s.name)} · ${esc(wb.number)}</span></div></div>`;
   await waitForPrintAssets();window.print();
 }
@@ -1252,4 +1303,20 @@ $("#printReportBtn").onclick=()=>{
 };
 
 ["stockSearch","stockFilter","salesSearch","salesStatus","customerSearch","waybillSearch","waybillDirection","expenseSearch","expenseCategoryFilter","auditSearch"].forEach(id=>{const el=$("#"+id);el?.addEventListener("input",renderAll);el?.addEventListener("change",renderAll)});
-window.addEventListener("load",()=>{init();$("#connectDriveBtn").disabled=true});
+window.addEventListener("load",async()=>{
+  const sessionId=new URLSearchParams(location.search).get("editorSession");
+  if(sessionId){
+    const session=await readEditorSession(sessionId);
+    if(session?.state){
+      editorTabSession=session;state=mergeState(session.state);$("#connectDriveBtn").disabled=true;setDriveStatus("Editor tab",true);$("#driveDetails").textContent="Changes from this tab are saved locally and sent to the original workspace tab for cloud sync.";showApp();
+      if(session.kind==="product"){switchView("stock");renderProductEditor(session.options?.id||null)}
+      else if(session.kind==="sale"){switchView("sales");renderSaleEditor(session.options?.sourceId||null,!!session.options?.copyMode,session.options?.initialType||"estimate")}
+      else if(session.kind==="purchase"){switchView("purchases");renderPurchaseEditor(session.options?.kind||"order",session.options?.sourceOrderId||null)}
+      else if(session.kind==="convertProforma"){switchView("sales");convertToProforma(session.options?.id)}
+      else if(session.kind==="convertInvoice"){switchView("sales");convertToInvoice(session.options?.id)}
+      else{init();$("#connectDriveBtn").disabled=true}
+      return;
+    }
+  }
+  init();$("#connectDriveBtn").disabled=true;
+});
