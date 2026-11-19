@@ -207,6 +207,7 @@ body{background:#f5f7f9;color:#1b2c3d}
 body.editor-page-mode{min-height:100vh;overflow:hidden;background:#f3f6f8}
 body.editor-page-mode #app{display:none!important}
 body.editor-page-mode #modal{position:fixed;inset:0;z-index:200;display:block!important;padding:0;background:#f3f6f8}
+body.editor-page-mode .toast{z-index:300}
 body.editor-page-mode .modal-backdrop{display:none!important}
 body.editor-page-mode .modal-card{width:100%;height:100%;max-width:none;max-height:none;overflow:auto;padding:0;border:0;border-radius:0;background:linear-gradient(145deg,#f6f8fa 0%,#fff 42%,#f4f7f8 100%);box-shadow:none}
 .editor-page-brand{position:sticky;top:0;z-index:25;display:flex;align-items:center;justify-content:space-between;gap:18px;min-height:76px;padding:12px clamp(20px,4.5vw,72px);border-bottom:1px solid #e2e8ec;background:rgba(255,255,255,.96);box-shadow:0 3px 14px rgba(17,42,62,.045);backdrop-filter:blur(12px)}
@@ -230,6 +231,22 @@ body.editor-page-mode .modal-card{width:100%;height:100%;max-width:none;max-heig
   .modern-total .grand span{color:#e3eaf0!important}.modern-total .grand strong{color:#a6dd37!important}
   .modern-document .print-footer{border-top:2px solid #79c900!important}
 }
+
+.document-preview-card{width:min(980px,100%)!important;max-height:92vh;padding:0!important;overflow:hidden!important;border-radius:16px!important}
+.document-preview{display:flex;max-height:92vh;flex-direction:column;background:#fff;color:#20364a}
+.document-preview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;padding:24px 28px 20px;border-bottom:1px solid #e5ebef;background:linear-gradient(115deg,#f3f7ee 0%,#fff 58%);border-left:5px solid #79c900}
+.document-preview-head h3{margin:5px 0;color:#102b43;font-size:22px;letter-spacing:-.025em}
+.document-preview-head>div:first-child>small{color:#71808d;font-size:12px}
+.document-preview-status{display:flex;flex-direction:column;align-items:flex-end;gap:8px}.document-preview-status>small{color:#7c8b97;font-size:11px}
+.document-preview-body{overflow:auto;padding:22px 28px 26px}
+.document-preview-meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:22px}
+.document-preview-meta>div{display:flex;min-width:0;flex-direction:column;gap:5px;padding:12px 13px;border:1px solid #e6ecef;border-radius:10px;background:#fbfcfc}
+.document-preview-meta small{color:#7b8995;font-size:9px;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.document-preview-meta strong{overflow-wrap:anywhere;color:#233e53;font-size:12px}
+.document-preview-table{overflow:auto;border:1px solid #e5ebef;border-radius:10px}.document-preview-table table{width:100%;border-collapse:collapse}.document-preview-table th,.document-preview-table td{padding:11px 12px;border-bottom:1px solid #e9eef1;text-align:left;vertical-align:top;font-size:12px}.document-preview-table th{background:#102b43;color:#fff;font-size:9px;letter-spacing:.07em;text-transform:uppercase}.document-preview-table tbody tr:last-child td{border-bottom:0}.document-preview-table td strong{color:#1d3a50}.document-preview-table td small{display:block;margin-top:4px;color:#778693;line-height:1.45}.document-preview-table .preview-line-index{width:42px;color:#81909b;font-weight:750}.document-preview-table .preview-number{text-align:right;white-space:nowrap}
+.document-preview-totals{width:min(420px,100%);margin:18px 0 22px auto}.document-preview-totals>div{display:flex;justify-content:space-between;gap:20px;padding:7px 2px;border-bottom:1px solid #edf0f2;font-size:12px}.document-preview-totals>div strong{color:#243f54}.document-preview-totals .preview-grand{margin-top:5px;padding:12px 13px;border:0;border-left:4px solid #79c900;border-radius:0 8px 8px 0;background:#102b43;color:#fff;font-weight:800}.document-preview-totals .preview-grand strong{color:#a6dd37;font-size:15px}
+.document-preview-note{margin:14px 0;padding:0 0 0 12px;border-left:3px solid #bedb93}.document-preview-note strong{color:#34536b;font-size:11px}.document-preview-note p{margin:5px 0 0;color:#536a7c;font-size:12px;line-height:1.55;white-space:pre-line}.document-preview-thanks{color:#788894;font-size:12px}.document-preview-receipt{margin-top:14px}
+.document-preview-footer{position:sticky;bottom:0;display:flex;justify-content:flex-end;gap:9px;padding:14px 24px;border-top:1px solid #e1e8ec;background:rgba(255,255,255,.96);box-shadow:0 -5px 16px rgba(16,40,59,.04)}
+@media(max-width:620px){.document-preview-card{max-height:96vh}.document-preview{max-height:96vh}.document-preview-head{padding:19px 17px 15px}.document-preview-head h3{font-size:18px}.document-preview-body{padding:16px 15px 20px}.document-preview-meta{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}.document-preview-meta>div{padding:10px}.document-preview-table th,.document-preview-table td{padding:9px 8px;font-size:10px}.document-preview-footer{padding:11px 13px;flex-wrap:wrap}.document-preview-footer .btn{flex:1 1 30%;padding-inline:8px;font-size:10px}}
 
 /* Keep long terms and notes flowing naturally across printed pages. Flex/grid
   fragmentation was leaving large blank areas when a terms block spanned pages. */
