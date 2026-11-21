@@ -123,13 +123,15 @@
         </section>
 
         <section id="cashflow" class="view">
-          <div class="page-head"><div><h2>Cash Flow</h2><p>Record money in/out and review trends.</p></div><button class="btn btn-primary" data-open-cash>+ Record Transaction</button></div>
+          <div class="page-head"><div><h2>Cash Flow</h2><p>Actual money received and paid, reconciled from your sales, supplier payments and expenses.</p></div><button class="btn btn-primary" data-open-cash>+ Record Transaction</button></div>
           <div class="cards three">
             <div class="metric"><span>Total cash in</span><strong id="cfIn">GH₵ 0.00</strong></div>
             <div class="metric"><span>Total cash out</span><strong id="cfOut">GH₵ 0.00</strong></div>
             <div class="metric"><span>Net cash flow</span><strong id="cfNet">GH₵ 0.00</strong></div>
           </div>
-          <div class="panel"><div class="panel-head"><h3>Monthly cash flow</h3></div><canvas id="monthlyCashChart"></canvas></div>
+          <div class="toolbar cashflow-period-toolbar"><div><strong>Trend period</strong><small id="cashflowPeriodHint">Monthly movement for the past 12 months</small></div><select id="cashflowPeriod" class="input" aria-label="Cash flow chart period"><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly" selected>Monthly</option><option value="yearly">Yearly</option></select></div>
+          <div class="grid two cashflow-charts"><div class="panel"><div class="panel-head"><div><h3>Cash in vs cash out</h3><small class="muted">Recorded movements by period</small></div></div><canvas id="monthlyCashChart"></canvas></div><div class="panel"><div class="panel-head"><div><h3>Net cash movement</h3><small class="muted">Cash received minus cash paid</small></div></div><canvas id="cashFlowTrendChart"></canvas></div></div>
+          <p class="cashflow-note">Unpaid invoices and supplier bills stay in receivables and payables until a payment is recorded. Cash flow shows money that has actually moved.</p>
           <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Category</th><th>Description</th><th>Amount</th><th>Reference</th><th>Payment method</th><th></th></tr></thead><tbody id="cashTable"></tbody></table></div>
         </section>
 
@@ -151,6 +153,8 @@
           <div class="toolbar"><input id="customerSearch" class="input" placeholder="Search customers…"></div>
           <div class="table-wrap"><table><thead><tr><th>Name</th><th>Contact</th><th>Phone</th><th>Email</th><th>Billing address</th><th>Documents</th><th>Total spent</th><th>Owed</th><th></th></tr></thead><tbody id="customersTable"></tbody></table></div>
         </section>
+
+        <section id="customerDetail" class="view" aria-label="Customer account detail"><div id="customerDetailContent"></div></section>
 
         <section id="audit" class="view">
           <div class="page-head"><div><h2>Audit log</h2><p>Review document, payment, stock and settings activity in this workspace.</p></div><button class="btn btn-outline" id="exportAuditBtn">Export CSV</button></div>
