@@ -63,7 +63,7 @@
         <button class="nav-item" data-view="waybills">⇄ <span>Waybills</span></button>
         <div class="nav-caption">MONEY & PEOPLE</div>
         <button class="nav-item" data-view="cashflow">◫ <span>Payments & cash</span></button>
-        <button class="nav-item" data-view="expenses">− <span>Expenses</span></button>
+        <button class="nav-item" data-view="expenses">⇄ <span>Transactions</span></button>
         <button class="nav-item" data-view="financeDocs">▧ <span>Receipts & credits</span></button>
         <button class="nav-item" data-view="customers">♙ <span>Customers & CRM</span></button>
         <div class="nav-caption">INSIGHTS & ADMIN</div>
@@ -136,10 +136,10 @@
         </section>
 
         <section id="expenses" class="view">
-          <div class="page-head"><div><h2>Expenses</h2><p>Track operating costs, vendor payments and receipt attachments.</p></div><button class="btn btn-primary" id="addExpenseBtn">+ Record expense</button></div>
-          <div class="cards three"><div class="metric"><span>Expenses this month</span><strong id="expenseMonthTotal">GH₵ 0.00</strong><small>Operating costs</small></div><div class="metric"><span>All recorded expenses</span><strong id="expenseTotal">GH₵ 0.00</strong><small id="expenseCount">0 expense entries</small></div><div class="metric"><span>Largest category</span><strong id="expenseTopCategory">—</strong><small>Based on recorded expenses</small></div></div>
-          <div class="toolbar"><input id="expenseSearch" class="input" placeholder="Search vendor, category or reference…"><select id="expenseCategoryFilter" class="input"><option value="">All categories</option></select></div>
-          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Vendor</th><th>Payment method</th><th>Reference</th><th>Amount</th><th>Receipt</th><th></th></tr></thead><tbody id="expensesTable"></tbody></table></div>
+          <div class="page-head"><div><h2>Transactions</h2><p>One timeline for cash movements, sales documents, supplier purchases and expenses.</p></div><div class="head-actions"><button class="btn btn-outline" data-open-cash>+ Cash movement</button><button class="btn btn-primary" id="addExpenseBtn">+ Record expense</button></div></div>
+          <div class="cards four"><div class="metric"><span>Cash in</span><strong id="txCashIn">GH₵ 0.00</strong><small>Payments and other receipts</small></div><div class="metric"><span>Cash out</span><strong id="txCashOut">GH₵ 0.00</strong><small>Supplier payments and expenses</small></div><div class="metric"><span>Sales invoiced</span><strong id="txSalesValue">GH₵ 0.00</strong><small>Sales invoices in this workspace</small></div><div class="metric"><span>Purchases invoiced</span><strong id="txPurchaseValue">GH₵ 0.00</strong><small>Supplier invoices in this workspace</small></div></div>
+          <div class="toolbar"><input id="transactionSearch" class="input" placeholder="Search reference, customer, supplier or details…"><select id="transactionTypeFilter" class="input"><option value="">All activity</option><option value="Cash in">Cash in</option><option value="Cash out">Cash out</option><option value="Sales">Sales documents</option><option value="Purchases">Purchase documents</option></select></div>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Type</th><th>Reference</th><th>Party / details</th><th>Status</th><th>Value</th><th>Cash in</th><th>Cash out</th><th>Payment method</th></tr></thead><tbody id="transactionsTable"></tbody></table></div>
         </section>
 
         <section id="financeDocs" class="view">
